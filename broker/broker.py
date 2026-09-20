@@ -210,6 +210,83 @@ def device_busy(dev):
     return any(any(n in line for n in needles) for line in out.stdout.splitlines())
 
 
+# How many lanes in a row must exit early before the radio itself is suspected,
+# and how long a parked radio waits before being probed again.
+WEDGE_STREAK = 3
+WEDGE_RETRY_S = 300
+
+
+def _rtl_test_output(dev, timeout):
+    """Raw rtl_test output for one device. Separated so it can be stubbed."""
+    out = subprocess.run(["rtl_test", "-d", str(dev), "-t"],
+                         capture_output=True, text=True, timeout=timeout)
+    return (out.stdout or "") + (out.stderr or "")
+
+
+def device_opens(dev, timeout=8):
+    """Can this radio actually be OPENED right now?
+
+    A wedged RTL-SDR enumerates perfectly: it appears in the device list with
+    the right serial, and every open fails. So presence proves nothing and the
+    only honest test is to try.
+
+    Two deliberate asymmetries:
+      * a TIMEOUT means it opened -- rtl_test runs until stopped, so being cut
+        off is success.
+      * any failure to RUN the probe returns True. Not being able to tell is
+        ignorance, not a dead radio, and returning False would park a working
+        radio because a binary moved.
+    """
+    try:
+        blob = _rtl_test_output(dev, timeout)
+    except subprocess.TimeoutExpired:
+        return True
+    except Exception:
+        return True
+    return not any(bad in blob for bad in (
+        "usb_claim_interface error",
+        "Failed to open rtlsdr device",
+        "No supported devices found"))
+
+
+class WedgeWatch:
+    """Per-radio detector for "enumerates fine, will not open".
+
+    Two stages, and both are load-bearing. A streak of EARLY EXITS is the
+    trigger, because a quiet band cannot produce one -- a silent band still
+    holds its dwell and simply records nothing. The verdict is then a direct
+    open probe, so a radio is never condemned on statistics.
+    """
+
+    def __init__(self, dev):
+        self.dev = dev
+        self.streak = 0
+        self.parked = False
+        self.parked_at = None
+
+    def record(self, early):
+        """Note one finished lane. True when the radio should now be probed."""
+        if not early:
+            self.streak = 0
+            return False
+        self.streak += 1
+        return self.streak >= WEDGE_STREAK
+
+    def park(self):
+        self.parked = True
+        self.parked_at = time.time()
+
+    def unpark(self):
+        self.parked = False
+        self.parked_at = None
+        self.streak = 0          # or the next early exit re-parks it at once
+
+    def due_for_retry(self, now=None):
+        if not self.parked:
+            return False
+        return (now or time.time()) - (self.parked_at or 0) >= WEDGE_RETRY_S
+
+
 def run_lane(dev, lane, dstate, slot=None):
     """Run one lane.
 
@@ -381,8 +458,27 @@ def device_thread(dev, spec):
 
     log("dev%s (%s) up: %s" % (dev, spec.get("label", "?"),
                                ",".join(l["id"] for l in lanes)))
+    wedge = WedgeWatch(dev)
     try:
         while not _stop.is_set():
+            # A radio that will not open is ONE fault, not one per lane. Left
+            # running, the rotation hands the dead device to the next lane every
+            # few seconds: on a live station that produced 926 claim errors, hours
+            # of hammering, and twelve lane faults masking a single hardware one.
+            if wedge.parked:
+                if wedge.due_for_retry():
+                    if device_opens(phys):
+                        log("dev%s RECOVERED -- the radio opens again, resuming"
+                            % dev)
+                        wedge.unpark()
+                        dstate.pop("wedged", None)
+                        dstate.pop("wedged_since", None)
+                        write_state()
+                    else:
+                        wedge.parked_at = time.time()
+                if wedge.parked:
+                    time.sleep(5)
+                    continue
             if os.path.exists(PAUSE_FMT % phys) or os.path.exists(PAUSE_FMT % dev):
                 if not dstate.get("paused"):
                     log("dev%s PAUSED -- device handed to the live tuner" % dev)
@@ -409,6 +505,27 @@ def device_thread(dev, spec):
                 dstate["next_lane_id"] = lanes[(idx + 1) % len(lanes)]["id"]
                 write_state()
                 run_lane(phys, lane, dstate, slot=dev)
+
+                # Did that lane give up long before its dwell was over? A quiet
+                # band does not -- it holds the dwell and records nothing. Only
+                # a device that will not open makes every lane quit at once.
+                ls = dstate["lanes"].get(lane["id"], {})
+                ran = ls.get("last_run_seconds") or 0
+                early = (not lane.get("self_terminating")
+                         and ran < min(15, max(3, lane["seconds"] * 0.5)))
+                if wedge.record(early=early) and not device_opens(phys):
+                    dstate["wedged"] = (
+                        "radio does not open (usb claim refused). A USB reset "
+                        "cannot clear a hung dongle -- it needs its power "
+                        "removed. Unplug it and plug it back in.")
+                    dstate["wedged_since"] = now()
+                    write_state()
+                    log("dev%s WEDGED -- physical index %s enumerates but will "
+                        "not open. Parking it and retrying every %ds; the other "
+                        "radio keeps running. This clears only on a REPLUG."
+                        % (dev, phys, WEDGE_RETRY_S))
+                    wedge.park()
+                    break
             dstate["cycles"] += 1
             write_state()
     finally:

@@ -278,6 +278,17 @@ def check():
         phys = str(d.get("physical_index", dev))
         if dev in held or phys in held:
             continue          # deliberately held; skip every liveness test
+
+        # The broker probed this radio and it would not open. That is a DIRECT
+        # observation, not an inference from silence, so it is reported at once
+        # rather than waiting for dead_radios() to accumulate the two runs and
+        # the producing-radio contrast it needs. It is also the one fault a
+        # stack restart cannot touch: only removing the dongle's power clears
+        # it, so say that instead of repairing around it.
+        if d.get("wedged"):
+            faults.append((dev, "WEDGED, NEEDS A PHYSICAL REPLUG: %s (since %s)"
+                           % (d["wedged"], d.get("wedged_since", "?"))))
+            continue
         if (PAUSE_PREFIX + dev) in flags and not tuner_live:
             faults.append((dev, "pause flag set with no live tuner (stale)"))
             continue
@@ -540,6 +551,22 @@ def main():
         notify("SDR watchdog: a radio has stopped producing entirely.\n%s\n\n%s"
                % ("\n".join("dev%s: %s" % (d, r) for d, r in faults),
                   "\n".join(outcomes)))
+        s["repairs"] = [r for r in s["repairs"] if r.get("ts", "") >= cut]
+        save_state(s)
+        return 1
+
+    # A dongle whose USB interface has hung is the one fault a restart provably
+    # cannot touch: the reset tool re-enumerates it and it still refuses to
+    # open. Restarting the stack anyway would churn the OTHER radio for nothing
+    # and bury the one message that says what to actually do.
+    wedged_only = all("WEDGED" in r for _, r in faults)
+    if wedged_only:
+        log("wedged radio(s) only -- NOT restarting (only a replug clears this)")
+        notify("SDR watchdog: a radio needs a PHYSICAL REPLUG.\n%s\n"
+               "It enumerates but will not open. A USB reset cannot clear a "
+               "dongle whose firmware has hung -- unplug it and plug it back "
+               "in. The other radio is still running."
+               % "\n".join("dev%s: %s" % (d, r) for d, r in faults))
         s["repairs"] = [r for r in s["repairs"] if r.get("ts", "") >= cut]
         save_state(s)
         return 1

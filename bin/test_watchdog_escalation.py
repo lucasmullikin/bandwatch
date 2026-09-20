@@ -133,3 +133,40 @@ def test_dead_radio_detection(tmp_path, label, devs, expected):
     wd = load_wd(str(tmp_path))
     got = sorted(d for d, _ in wd.dead_radios(_state(devs)))
     assert got == sorted(expected), label
+
+
+# --------------------------------------------- a wedged radio is not repairable
+
+@pytest.fixture(scope="module")
+def wedged(tmp_path_factory):
+    """The broker parked a radio. A restart cannot clear that."""
+    wd = load_wd(str(tmp_path_factory.mktemp("wedged")))
+    repairs, notifies = [], []
+    wd.repair = lambda reason: repairs.append(reason)
+    wd.notify = lambda text: notifies.append(text)
+    wd.heartbeat = lambda faults: None
+    wd.check = lambda: [("1", "WEDGED, NEEDS A PHYSICAL REPLUG: radio does not "
+                              "open (usb claim refused) (since 2026-09-20T23:00)")]
+    wd.main()
+    return {"repairs": repairs, "notifies": notifies}
+
+
+def test_a_wedged_radio_never_triggers_a_stack_restart(wedged):
+    """The reset tool already proved re-enumeration does not clear it."""
+    assert wedged["repairs"] == []
+
+
+def test_a_wedged_radio_notifies_once(wedged):
+    assert len(wedged["notifies"]) == 1
+
+
+def test_the_notification_says_what_to_actually_do(wedged):
+    """Not 'a fault occurred' -- the one action that works."""
+    text = wedged["notifies"][0]
+    assert "REPLUG" in text.upper()
+    assert "unplug" in text.lower()
+
+
+def test_the_notification_says_the_other_radio_is_still_running(wedged):
+    """So it reads as one radio down, not the station down."""
+    assert "other radio" in wedged["notifies"][0].lower()
