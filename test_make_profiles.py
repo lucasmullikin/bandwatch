@@ -165,3 +165,20 @@ def test_sweep_with_a_malformed_range_is_refused():
     with pytest.raises(C.ConfigError) as e:
         built_sweep({"kind": "sweep", "range": "225M-400M", "seconds": 60})
     assert "LOW:HIGH:BINSIZE" in str(e.value)
+
+
+def test_min_per_hour_can_be_overridden_per_profile():
+    """A pinned lane is reasonably expected to produce more than a sliced one."""
+    d = doc([{"id": "s", "min_per_hour": 3}])
+    d["lanes"]["s"] = {"kind": "sweep", "range": "225M:400M:25k",
+                       "seconds": 300, "min_per_hour": 0}
+    got = lanes_of(M.build_profiles(d))
+    assert got["s"]["expect_min_events_per_hour"] == 3
+
+
+def test_min_per_hour_override_of_zero_is_honoured():
+    """0 is falsy; treating it as unset would restore the strict default."""
+    d = doc([{"id": "s", "min_per_hour": 0}])
+    d["lanes"]["s"] = {"kind": "sweep", "range": "225M:400M:25k", "seconds": 300}
+    got = lanes_of(M.build_profiles(d))
+    assert got["s"]["expect_min_events_per_hour"] == 0

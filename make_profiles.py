@@ -127,7 +127,12 @@ def build_lane(lane_id, spec):
     return base
 
 
-OVERRIDABLE = ("seconds", "enabled")
+# min_per_hour belongs here for the same reason seconds does: what a lane should
+# produce depends on how long it is given. A sweep pinned for 300s in the day
+# profile and 180s during an aviation event is reasonably expected to deliver
+# different amounts, and a watchdog holding it to one number in both either
+# cries wolf in one profile or sleeps through a fault in the other.
+OVERRIDABLE = ("seconds", "enabled", "min_per_hour")
 
 
 def split_entry(entry, profile, dev):
