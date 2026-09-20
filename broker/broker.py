@@ -209,12 +209,31 @@ def device_busy(dev):
     return any(any(n in line for n in needles) for line in out.stdout.splitlines())
 
 
-def run_lane(dev, lane, dstate):
+def run_lane(dev, lane, dstate, slot=None):
+    """Run one lane.
+
+    `dev` is the PHYSICAL librtlsdr index -- the number the decoder must be
+    given to open the right hardware. `slot` is the LOGICAL device from the
+    profile (dev0 = low band, dev1 = high band).
+
+    They are usually the same and were assumed to be for a long time. They stop
+    being the same the moment the dongles are replugged into different ports:
+    librtlsdr's ordering is not stable, which is exactly why lanes are pinned
+    by serial. Measured 2026-09-20 after a replug -- physical 0 became the
+    high-band radio and physical 1 the low-band one.
+
+    Labels must follow the LOGICAL slot, commands must follow the PHYSICAL
+    index. Using the physical index for both meant every log line and every log
+    FILENAME named the wrong radio after a replug, which points anyone
+    diagnosing a fault at the wrong dongle. That cost real time here.
+    """
     lane_id = lane["id"]
-    tag = "dev%s/%s" % (dev, lane_id)
+    if slot is None:
+        slot = dev
+    tag = "dev%s/%s" % (slot, lane_id)
     seconds = int(lane.get("seconds", 300))
     cmd = [c.replace("{DEV}", str(dev)) for c in lane["cmd"]]
-    logfile = os.path.join(LOGS, "lane-%s-%s.log" % (dev, lane_id))
+    logfile = os.path.join(LOGS, "lane-%s-%s.log" % (slot, lane_id))
 
     before = count_events(lane)
     started = time.time()
@@ -384,7 +403,7 @@ def device_thread(dev, spec):
                 # mid-lane advances rather than repeating the same lane forever
                 dstate["next_lane_id"] = lanes[(idx + 1) % len(lanes)]["id"]
                 write_state()
-                run_lane(phys, lane, dstate)
+                run_lane(phys, lane, dstate, slot=dev)
             dstate["cycles"] += 1
             write_state()
     finally:

@@ -117,5 +117,62 @@ class TestLineMode(Base):
         self.assertEqual(broker.count_events(self.lane()), 0)
 
 
+
+class TestLaneLabelling(unittest.TestCase):
+    """Labels follow the LOGICAL slot; commands follow the PHYSICAL index.
+
+    librtlsdr's ordering is not stable across a replug -- that is the whole
+    reason lanes are pinned by serial. Measured 2026-09-20: after replugging,
+    physical index 0 became the high-band radio and physical 1 the low-band
+    one. run_lane() was given only the physical index and used it for the log
+    tag AND the log filename, so every line and every file named the wrong
+    radio. Anyone diagnosing a fault would have been sent to the other dongle.
+    """
+
+    def test_signature_takes_a_separate_logical_slot(self):
+        import inspect
+        sig = inspect.signature(broker.run_lane)
+        self.assertIn("slot", sig.parameters,
+                      "run_lane lost its logical-slot argument; labels would "
+                      "follow the physical index again")
+
+    def test_slot_defaults_to_the_physical_index(self):
+        """The common case -- they agree -- must not need the argument."""
+        import inspect
+        self.assertIsNone(inspect.signature(broker.run_lane).parameters["slot"].default)
+
+    def test_the_caller_passes_the_logical_slot(self):
+        """Read the source: the wiring is the bug, and no unit test reaches it.
+
+        run_lane is called inside the device thread, which needs real hardware.
+        Asserting on the call site is the only way to pin that `slot=dev` is
+        actually passed rather than quietly dropped in a refactor.
+        """
+        src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                "broker.py")).read()
+        self.assertIn("run_lane(phys, lane, dstate, slot=dev)", src,
+                      "the device loop no longer passes the logical slot, so "
+                      "log tags and filenames follow the physical index again")
+
+    def test_command_substitution_still_uses_the_PHYSICAL_index(self):
+        """NEGATIVE CONTROL for the fix.
+
+        Swapping labels to the logical slot must NOT swap the {DEV} the decoder
+        is given -- that would open the wrong radio, which is worse than a
+        wrong label and shows up only as bad reception.
+        """
+        src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                "broker.py")).read()
+        self.assertIn('cmd = [c.replace("{DEV}", str(dev)) for c in lane["cmd"]]', src,
+                      "{DEV} must still be the physical index")
+        self.assertNotIn('c.replace("{DEV}", str(slot))', src,
+                         "{DEV} was switched to the logical slot -- this opens "
+                         "the WRONG radio after a replug")
+
+
+# The entry point stays at the BOTTOM. Placed mid-file it runs before the
+# classes below are defined, so `python3 test_counting.py` silently skips them
+# while still reporting success -- the same trap that had been sitting in
+# bin/test_watchdog_escalation.py.
 if __name__ == "__main__":
     unittest.main()
