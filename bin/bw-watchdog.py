@@ -293,7 +293,53 @@ def check():
                 faults.append((dev, "lane %s exits early on every run" % lid))
     # a lane that never gets a turn is invisible to every check above
     faults.extend(starved_lanes())
+    faults.extend(dead_radios(st))
     return faults
+
+
+DEAD_RADIO_MIN_LANES = 2      # below this, "all its lanes are quiet" means little
+DEAD_RADIO_MIN_RUNS = 2       # a lane needs this many turns before it counts
+
+
+def dead_radios(st):
+    """A radio where EVERY lane produced nothing, while another radio is fine.
+
+    Per-lane faults cannot see this. Each lane looks like its own problem, the
+    watchdog repairs each one by restarting the stack, and the restart cannot
+    fix the actual cause -- so it repeats forever. Measured 2026-09-20: one
+    dongle's USB interface was stuck claimed for two days. Every open failed,
+    the watchdog kept restarting, and nothing improved because the fault was
+    below the software entirely.
+
+    The signal is COMPARATIVE and that is what makes it trustworthy: one radio
+    silent proves nothing (bands go quiet, antennas are bad), but one radio
+    silent across every one of its lanes WHILE ANOTHER RADIO IS PRODUCING makes
+    the radio itself the only variable that differs.
+    """
+    devs = st.get("devices") or {}
+    if len(devs) < 2:
+        return []                     # nothing to compare against
+    produced, silent = {}, {}
+    for dev, d in devs.items():
+        judged = total = 0
+        for ls in (d.get("lanes") or {}).values():
+            if ls.get("runs", 0) < DEAD_RADIO_MIN_RUNS:
+                continue              # not had a fair turn yet
+            judged += 1
+            total += ls.get("events_total", 0) or 0
+        if judged >= DEAD_RADIO_MIN_LANES:
+            (produced if total > 0 else silent)[dev] = judged
+    if not produced or not silent:
+        return []                     # no contrast -- say nothing
+    out = []
+    for dev, judged in sorted(silent.items()):
+        out.append((dev, (
+            "radio produced NOTHING across %d lanes while dev%s is producing "
+            "-- the radio is the common factor, not the lanes. A stack restart "
+            "will not fix this. Check the dongle: a stuck USB claim clears only "
+            "on a replug, and 'rtl_test -d %s' will say so directly."
+            % (judged, ", dev".join(sorted(produced)), dev))))
+    return out
 
 
 def lane_of(reason):
@@ -441,6 +487,17 @@ def main():
     repeats = [d for d in devs
                if any(r.get("device") == d and r.get("ts", "") >= cut
                       for r in s["repairs"])]
+
+    # A dead radio is not repairable by restarting either, and restarting on it
+    # churns the whole stack every cycle for a fault that is below the software.
+    dead_only = all("the radio is the common factor" in r for _, r in faults)
+    if dead_only:
+        log("dead radio -- NOT restarting (the fault is below the software)")
+        notify("SDR watchdog: a radio has stopped producing entirely.\n%s"
+               % "\n".join("dev%s: %s" % (d, r) for d, r in faults))
+        s["repairs"] = [r for r in s["repairs"] if r.get("ts", "") >= cut]
+        save_state(s)
+        return 1
 
     starve_only = all("lane " in r and ("starved" in r or "never run" in r.lower()
                                         or "last ran" in r) for _, r in faults)

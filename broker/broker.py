@@ -99,13 +99,27 @@ def count_events(lane):
     a perfectly working survey lane would flag itself FAILED. Those lanes
     declare count_mode="mtime": the file's modification time is the counter,
     so any rewrite registers as progress.
+
+    BUT AN EMPTY FILE IS NOT PROGRESS. Measured 2026-09-20: one radio had been
+    unusable for two days -- its USB interface stuck claimed, every open
+    failing -- and rtl_power still created and truncated its CSV on every run.
+    The mtime advanced, the size stayed at 0, and all four sweep lanes on that
+    radio reported themselves healthy the entire time while the event store
+    recorded nothing. A touched file and a written file were the same signal.
+
+    So mtime mode now requires BOTH: the file was rewritten AND it has bytes
+    in it. An empty sink reads as 0, which makes the delta against any earlier
+    non-empty reading negative, and the caller floors that at no progress.
     """
     sink = lane.get("event_file")
     if not sink or not os.path.exists(sink):
         return 0
     try:
         if lane.get("count_mode") == "mtime":
-            return int(os.path.getmtime(sink))
+            st = os.stat(sink)
+            if st.st_size <= 0:
+                return 0                    # touched, but nothing was written
+            return int(st.st_mtime)
         with open(sink, "rb") as fh:
             return sum(1 for _ in fh)
     except Exception:

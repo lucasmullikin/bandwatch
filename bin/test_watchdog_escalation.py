@@ -60,4 +60,85 @@ check(n4 == 0 and n5 == 0, "passes 4-5 do not re-page (no alert spam)")
 check(r7 == 1, "after a clean pass the streak resets and repair resumes")
 print("---")
 print("ESCALATION LOGIC: " + ("CORRECT" if ok else "BROKEN"))
-sys.exit(0 if ok else 1)
+escalation_ok = ok
+
+
+# ---------------------------------------------------------------------------
+# A radio that produces nothing while the other one is fine.
+#
+# Every test below has its negative control, because the failure that matters
+# here is a check that cries "dead radio" at a quiet band -- that would train
+# the operator to ignore the one message that means the hardware is gone.
+# ---------------------------------------------------------------------------
+
+def _lanes(spec):
+    """spec: {lane: (runs, events_total)}"""
+    return {k: {"runs": r, "events_total": e} for k, (r, e) in spec.items()}
+
+
+def _state(devs):
+    return {"devices": {d: {"lanes": _lanes(sp)} for d, sp in devs.items()}}
+
+
+_dead_checks = []
+
+
+def _dead(label, state, expect_devs):
+    got = sorted(d for d, _ in wd.dead_radios(state))
+    ok = got == sorted(expect_devs)
+    _dead_checks.append(ok)
+    print("  %s  %-58s got=%s want=%s" % ("PASS" if ok else "FAIL", label, got, expect_devs))
+
+
+print("\n--- dead radio detection ---")
+
+# the real incident: dev1 silent across 4 lanes, dev0 producing
+_dead("one radio silent, the other producing -> flagged",
+      _state({"0": {"acars": (3, 116), "air_survey": (3, 40)},
+              "1": {"adsb": (3, 0), "ism433": (3, 0),
+                    "p25_survey": (3, 0), "survey_fm": (3, 0)}}),
+      ["1"])
+
+# NEGATIVE CONTROL: both radios quiet is a quiet night, not a dead radio
+_dead("both radios silent -> NOT flagged (no contrast)",
+      _state({"0": {"a": (3, 0), "b": (3, 0)},
+              "1": {"c": (3, 0), "d": (3, 0)}}),
+      [])
+
+# NEGATIVE CONTROL: both producing
+_dead("both producing -> NOT flagged",
+      _state({"0": {"a": (3, 5), "b": (3, 1)},
+              "1": {"c": (3, 2), "d": (3, 9)}}),
+      [])
+
+# NEGATIVE CONTROL: a lane that has not had a fair turn is not evidence
+_dead("silent radio whose lanes barely ran -> NOT flagged",
+      _state({"0": {"a": (3, 5), "b": (3, 1)},
+              "1": {"c": (1, 0), "d": (1, 0)}}),
+      [])
+
+# NEGATIVE CONTROL: a single lane is not enough to condemn a radio
+_dead("silent radio with only ONE judged lane -> NOT flagged",
+      _state({"0": {"a": (3, 5), "b": (3, 1)},
+              "1": {"c": (3, 0)}}),
+      [])
+
+# one producing lane is enough to clear the radio
+_dead("radio with one producing lane among many -> NOT flagged",
+      _state({"0": {"a": (3, 5), "b": (3, 1)},
+              "1": {"c": (3, 0), "d": (3, 0), "e": (3, 2)}}),
+      [])
+
+# a single-radio station must never self-condemn: nothing to compare with
+_dead("single radio only -> NOT flagged (nothing to compare)",
+      _state({"0": {"a": (3, 0), "b": (3, 0)}}),
+      [])
+
+print("---")
+dead_ok = all(_dead_checks)
+print("DEAD RADIO DETECTION: " + ("CORRECT" if dead_ok else "FAILED"))
+
+# One exit for the whole file, at the end. The escalation block used to exit
+# here, so every check appended after it never ran while the file still
+# reported success.
+sys.exit(0 if (escalation_ok and dead_ok) else 1)
