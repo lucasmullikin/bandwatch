@@ -150,6 +150,32 @@ def kill_group(proc, tag, term_wait=10):
             log("%s ignored %s, escalating" % (tag, sig.name))
 
 
+# How long to let a self-terminating lane finish its own exit before signalling.
+SELF_TERM_GRACE_S = 20
+
+
+def exit_grace(lane, yielding):
+    """Seconds to wait for a lane to leave ON ITS OWN before signalling it.
+
+    A sweep is self-terminating: rtl_power is given -e and stops by itself. It
+    also CATCHES SIGTERM and finishes the current hop first ("Signal caught,
+    finishing scan pass"), which routinely outlasts the SIGTERM wait -- so the
+    broker escalated to SIGKILL and killed it mid-USB-transfer.
+
+    That is the one way to end a USB session that cannot clean up after itself:
+    SIGKILL is uncatchable, so libusb never releases the interface. Measured
+    across this station's whole history: 1,923 SIGTERM escalations in 19,122
+    lane starts, 96% of them sweeps, against a claim-error rate on the next
+    open of almost exactly the same 10%.
+
+    A lane displaced by a live tune still gets no grace -- someone is waiting
+    on the audio, and a displaced lane has nothing to flush.
+    """
+    if yielding:
+        return 0
+    return SELF_TERM_GRACE_S if lane.get("self_terminating") else 0
+
+
 def enumerate_dongles():
     """Map serial -> current index by asking librtlsdr, via rtl_test.
 
@@ -391,6 +417,23 @@ def run_lane(dev, lane, dstate, slot=None):
             # someone who just clicked a station. Displaced lanes have nothing
             # to flush -- recordings are written per transmission -- so give a
             # token 0.3s then SIGKILL.
+            # Let a self-terminating lane leave on its own first. It is already
+            # exiting; signalling it now is what produced the SIGKILLs.
+            grace = exit_grace(lane, yielding)
+            if grace:
+                deadline = time.time() + grace
+                while time.time() < deadline and proc.poll() is None:
+                    time.sleep(0.5)
+                if proc.poll() is not None:
+                    log("%s finished its own scan pass within the %ds grace "
+                        "-- not signalled" % (tag, grace))
+                else:
+                    # Still running after the grace means -e is too long for
+                    # this dwell. Say which, because the fix is the config.
+                    log("%s STILL RUNNING %ds past its dwell -- its sweep is "
+                        "longer than its slot, so it will be killed. Shorten "
+                        "-e or lengthen the dwell." % (tag, grace))
+        if proc.poll() is None:
             kill_group(proc, tag, term_wait=0.3 if yielding else 10)
 
     # prove the device came back before handing it to the next lane
