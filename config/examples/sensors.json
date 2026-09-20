@@ -1,0 +1,32 @@
+{
+  "_note": "Sensors YOU have explicitly claimed. Receiving a sensor is NOT owning it, so nothing appears here by inference alone -- the code will never add an entry for you. Anything not listed is reported as third-party and gets no label, no history, and no alert.",
+  "_how_to_identify_your_own": [
+    "Run the tpms315 or ism433 lane, then drive your own vehicle in and out of range.",
+    "Your own tyre sensors show up as a tight group with near-identical sighting counts and a much higher SNR than passing traffic (on the author's station, 19.8-22.4 dB against 8-14 dB for the street).",
+    "Confirm it deliberately. A high SNR is evidence, not proof, and a neighbour parked closer than the road will outrank a car going past.",
+    "Do not add a sensor you merely suspect is yours. See docs/COVERAGE.md: a sensor id identifies a device, never a person, and labelling someone else's device as though you know whose it is is the exact mistake this file exists to prevent."
+  ],
+  "mine": [],
+  "labels": {},
+  "_example": {
+    "mine": [
+      "Toyota/00000000",
+      "Toyota/00000001"
+    ],
+    "labels": {
+      "Toyota/00000000": "My car - front left",
+      "Toyota/00000001": "My car - front right"
+    },
+    "vehicles": {
+      "car1": {
+        "label": "My car",
+        "sensors": [
+          "Toyota/00000000",
+          "Toyota/00000001"
+        ]
+      }
+    }
+  },
+  "vehicles": {},
+  "_vehicles_note": "Group claimed sensors into vehicles so the console can report one line per car instead of four per tyre. Presence is stated honestly: 'parked' is inferred from TPMS going quiet when stationary, which is a property of the sensor, not a claim that anybody is home."
+}

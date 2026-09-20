@@ -1,0 +1,1997 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>bandwatch</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  :root{
+    color-scheme:light;
+    --bg:#E9EDF1; --surface:#FFFFFF; --surface-2:#F3F6F9; --line:#D2DAE2;
+    --text:#141D26; --muted:#5B6B7A; --faint:#8C9BA9;
+    --accent:#C2701A; --live:#1D8FA6;
+    --ok:#3A8659; --warn:#B5761A; --alert:#B23C36;
+  }
+  @media (prefers-color-scheme:dark){
+    :root:not([data-theme="light"]){
+      color-scheme:dark;
+      --bg:#0C1219; --surface:#141D26; --surface-2:#1B2733; --line:#2A3947;
+      --text:#DCE5ED; --muted:#8496A6; --faint:#5F7183;
+      --accent:#E8912B; --live:#3EBBD2;
+      --ok:#4FB176; --warn:#D9922C; --alert:#D4564E;
+    }
+  }
+  :root[data-theme="dark"]{
+    color-scheme:dark;
+    --bg:#0C1219; --surface:#141D26; --surface-2:#1B2733; --line:#2A3947;
+    --text:#DCE5ED; --muted:#8496A6; --faint:#5F7183;
+    --accent:#E8912B; --live:#3EBBD2;
+    --ok:#4FB176; --warn:#D9922C; --alert:#D4564E;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0;background:var(--bg);color:var(--text);
+    font-family:Archivo,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    line-height:1.5;-webkit-font-smoothing:antialiased;
+  }
+  .mono,code{font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace}
+  .wrap{max-width:980px;margin:0 auto;padding:0 16px 60px}
+
+  header{padding:26px 0 16px;display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
+  h1{font-size:21px;margin:0;font-weight:700;letter-spacing:-.01em}
+  .sub{font-family:"IBM Plex Mono",monospace;font-size:11.5px;color:var(--faint)}
+  .pip{
+    margin-left:auto;display:inline-flex;align-items:center;gap:6px;
+    font-family:"IBM Plex Mono",monospace;font-size:10.5px;letter-spacing:.08em;
+    text-transform:uppercase;color:var(--live);
+  }
+  .pip::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--live)}
+  .pip.stale{color:var(--warn)}
+  .pip.stale::before{background:var(--warn)}
+
+  .bar{
+    display:flex;gap:7px;align-items:center;flex-wrap:wrap;
+    padding:11px 0 13px;position:sticky;top:0;background:var(--bg);z-index:5;
+    border-bottom:1px solid var(--line);
+  }
+  .chip{
+    font-family:"IBM Plex Mono",monospace;font-size:11px;padding:4px 10px;
+    border:1px solid var(--line);border-radius:99px;color:var(--muted);
+    background:var(--surface);cursor:pointer;white-space:nowrap;
+  }
+  .chip:hover{border-color:var(--accent);color:var(--text)}
+  .chip[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:#fff}
+  .chip:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  input[type=search]{
+    flex:1;min-width:150px;font-family:"IBM Plex Mono",monospace;font-size:12px;
+    padding:6px 11px;border:1px solid var(--line);border-radius:4px;
+    background:var(--surface);color:var(--text);
+  }
+  input[type=search]:focus{outline:2px solid var(--accent);outline-offset:-1px}
+
+  .list{background:var(--surface);border:1px solid var(--line);border-radius:6px;
+        margin-top:14px;overflow:hidden}
+  .row{
+    display:grid;grid-template-columns:74px 82px minmax(0,1fr);gap:13px;
+    padding:11px 14px;border-bottom:1px solid var(--line);align-items:start;
+  }
+  .row:last-child{border-bottom:0}
+  .row.hot{background:color-mix(in srgb,var(--alert) 8%,transparent)}
+  @media(max-width:600px){
+    /* 3 children in a 2-column grid: the content div auto-placed into column 1
+       (64px) and every word wrapped. Give it its own full-width row. */
+    .row{grid-template-columns:64px 1fr;gap:6px 13px}
+    .row .ts{grid-column:1;grid-row:1}
+    .row .tagcell{grid-column:2;grid-row:1;justify-self:start}
+    .row > div:last-child{grid-column:1 / -1;grid-row:2;min-width:0}
+    .transcript{margin-top:2px}
+  }
+  .ts{font-family:"IBM Plex Mono",monospace;font-size:11.5px;color:var(--faint);
+      font-variant-numeric:tabular-nums;padding-top:2px}
+  .tag{
+    font-family:"IBM Plex Mono",monospace;font-size:9.5px;letter-spacing:.06em;
+    text-transform:uppercase;padding:2.5px 6px;border-radius:3px;
+    display:inline-block;font-weight:600;white-space:nowrap;
+  }
+  .t-voice{background:color-mix(in srgb,var(--live) 16%,transparent);color:var(--live)}
+  .t-adsb{background:color-mix(in srgb,var(--accent) 16%,transparent);color:var(--accent)}
+  .t-ism{background:color-mix(in srgb,var(--ok) 16%,transparent);color:var(--ok)}
+  .t-pager{background:color-mix(in srgb,var(--warn) 18%,transparent);color:var(--warn)}
+  .t-acars{background:color-mix(in srgb,var(--live) 22%,transparent);color:var(--live)}
+  .t-hit{background:var(--alert);color:#fff}
+  .title-line{font-size:13.5px;font-weight:600;margin:0 0 2px}
+  .meta{font-size:12px;color:var(--muted);margin:0}
+  .count{
+    font-family:"IBM Plex Mono",monospace;font-size:10.5px;color:var(--faint);
+    border:1px solid var(--line);border-radius:99px;padding:1px 6px;margin-left:6px;
+    font-variant-numeric:tabular-nums;
+  }
+  .transcript{
+    font-size:13px;margin:6px 0 0;padding:8px 11px;background:var(--surface-2);
+    border-radius:4px;border-left:2px solid var(--live);
+    overflow-wrap:anywhere;
+  }
+  .transcript.pending{color:var(--faint);font-style:italic;border-left-color:var(--line)}
+  audio{width:100%;max-width:420px;margin-top:8px;height:32px}
+  .keep{
+    font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.05em;
+    text-transform:uppercase;padding:3px 8px;border:1px solid var(--line);
+    border-radius:4px;background:none;color:var(--muted);cursor:pointer;margin-left:8px;
+  }
+  .keep:hover{border-color:var(--accent);color:var(--text)}
+  .keep:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .keep[aria-pressed="true"]{background:var(--ok);border-color:var(--ok);color:#fff}
+  .hashline{font-family:"IBM Plex Mono",monospace;font-size:10px;color:var(--faint);
+            margin-top:4px;overflow-wrap:anywhere}
+
+  /* --- controls --- */
+  .ctl{
+    display:flex;gap:9px;align-items:center;flex-wrap:wrap;
+    padding:11px 13px;background:var(--surface);border:1px solid var(--line);
+    border-radius:6px;margin-top:13px;
+  }
+  .ctl-label{
+    font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.1em;
+    text-transform:uppercase;color:var(--faint);margin-right:2px;
+  }
+  .toggle{
+    display:inline-flex;align-items:center;gap:7px;cursor:pointer;
+    font-size:12.5px;padding:5px 11px;border:1px solid var(--line);
+    border-radius:5px;background:var(--surface-2);color:var(--muted);
+  }
+  .toggle:hover{border-color:var(--accent)}
+  .toggle:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .toggle .led{
+    width:8px;height:8px;border-radius:50%;background:var(--line);flex:none;
+  }
+  .toggle[data-on="true"]{color:var(--text);border-color:color-mix(in srgb,var(--ok) 45%,var(--line))}
+  .toggle[data-on="true"] .led{background:var(--ok);
+    box-shadow:0 0 0 3px color-mix(in srgb,var(--ok) 20%,transparent)}
+  .toggle[data-on="false"] .led{background:var(--faint)}
+  .toggle.danger[data-on="false"]{color:var(--alert);border-color:color-mix(in srgb,var(--alert) 40%,var(--line))}
+  .toggle.danger[data-on="false"] .led{background:var(--alert)}
+  .modes{
+    display:flex;gap:7px;align-items:center;flex-wrap:wrap;
+    padding:10px 13px;background:var(--surface);border:1px solid var(--line);
+    border-top:0;border-radius:0 0 6px 6px;
+  }
+  .mode{
+    font-family:"IBM Plex Mono",monospace;font-size:11px;padding:5px 11px;
+    border:1px solid var(--line);border-radius:5px;background:var(--surface-2);
+    color:var(--muted);cursor:pointer;white-space:nowrap;
+  }
+  .mode:hover{border-color:var(--accent);color:var(--text)}
+  .mode:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .mode[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:#fff}
+  .mode.event{border-style:dashed}
+  .mode.event[aria-pressed="true"]{background:var(--alert);border-color:var(--alert)}
+  .ctl{border-radius:6px 6px 0 0}
+  .sched-note{font-size:11.5px;color:var(--faint);margin-left:auto;text-align:right;max-width:40ch}
+  .ctl-note{font-size:11.5px;color:var(--faint);margin-left:auto;max-width:44ch;text-align:right}
+  .wdstat{
+    flex-basis:100%;text-align:right;font-family:"IBM Plex Mono",monospace;
+    font-size:10.5px;color:var(--faint);
+  }
+  .wdstat.bad{color:var(--alert)}
+  .wdstat.stale{color:var(--warn)}
+
+  /* --- sensor browser --- */
+  /* flex-wrap is load-bearing: nine tabs lay out to 740px, so on a 375px
+     phone four of them sat off-screen entirely. row-gap:0 keeps the
+     selected tab's margin-bottom:-1px meeting the container border. */
+  .tabs{display:flex;flex-wrap:wrap;gap:0 4px;margin-top:16px;
+        border-bottom:1px solid var(--line)}
+  .tab{
+    font-family:"IBM Plex Mono",monospace;font-size:11.5px;padding:7px 14px;
+    border:1px solid transparent;border-bottom:0;border-radius:5px 5px 0 0;
+    background:none;color:var(--muted);cursor:pointer;margin-bottom:-1px;
+  }
+  .tab[aria-selected="true"]{
+    background:var(--surface);border-color:var(--line);color:var(--text);font-weight:600;
+  }
+  .tab:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+  .drawer .close:focus-visible,.stopbtn:focus-visible{
+    outline:2px solid var(--accent);outline-offset:2px}
+  .dev-row{
+    display:grid;grid-template-columns:1fr 92px 74px 116px;gap:12px;
+    padding:10px 14px;border-bottom:1px solid var(--line);align-items:center;
+  }
+  .dev-row:last-child{border-bottom:0}
+  .dev-row.head{
+    font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.09em;
+    text-transform:uppercase;color:var(--faint);background:var(--surface-2);
+  }
+  .dev-row.head span{cursor:pointer}
+  .dev-row.head span:hover{color:var(--accent)}
+  .dev-name{font-family:"IBM Plex Mono",monospace;font-size:12.5px;font-weight:600;
+            overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .dev-sum{font-size:11.5px;color:var(--muted);margin-top:1px;
+           overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .dev-n{font-family:"IBM Plex Mono",monospace;font-size:12px;
+         font-variant-numeric:tabular-nums;text-align:right;color:var(--muted)}
+  .dev-when{font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--faint);
+            font-variant-numeric:tabular-nums;text-align:right}
+  .spark{display:flex;align-items:flex-end;gap:1px;height:22px}
+  .spark i{flex:1;background:var(--line);border-radius:1px;min-height:1px}
+  .spark i.on{background:var(--accent)}
+  .dev-click{cursor:pointer}
+  .dev-click:hover{background:var(--surface-2)}
+  @media(max-width:640px){
+    /* same trap: hiding .spark leaves its wrapper div occupying a 4th cell */
+    .dev-row{grid-template-columns:minmax(0,1fr) 58px 62px}
+    .dev-row > div:nth-child(4), .dev-row.head > span:nth-child(4){display:none}
+    /* trim the tabs so nine wrap into two rows rather than three, but keep a
+       44px tap target -- they were 29px, and a near-miss on a two-row strip
+       lands on the wrong view. min-height with centred content, not padding,
+       so the row heights stay even. */
+    .tab{padding:0 9px;font-size:11px;min-height:44px;display:inline-flex;
+         align-items:center}
+    .chip{min-height:36px;display:inline-flex;align-items:center}
+    /* iOS zooms the page on focus of any input under 16px and does not zoom
+       back. #q lives in the sticky bar of the default tab, so this fired
+       constantly in daily use. */
+    input[type=search]{font-size:16px}
+    /* the taps that actually do something: toggles start and stop the
+       pipeline, .stopbtn hands the borrowed radio back, .keep preserves a
+       recording. They were 23-31px. */
+    .toggle,.mode,.stopbtn{min-height:44px;display:inline-flex;align-items:center}
+    .keep{display:inline-flex;align-items:center;min-height:36px;vertical-align:middle}
+    .drawer .close{min-height:44px;min-width:64px}
+  }
+  /* .pill was used in two places and defined nowhere, so the badge that tells
+     an expected zero from a broken one rendered as plain text. */
+  .pill{font-family:"IBM Plex Mono",monospace;font-size:9px;letter-spacing:.05em;
+        text-transform:uppercase;padding:1px 5px;border-radius:3px;margin-left:5px;
+        background:color-mix(in srgb,var(--ok) 18%,transparent);color:var(--ok);
+        white-space:nowrap;vertical-align:middle}
+  .hidden{display:none}
+
+  /* --- tune / station directory --- */
+  .nowplaying{
+    display:flex;gap:12px;align-items:center;flex-wrap:wrap;
+    padding:12px 14px;background:var(--surface);border:1px solid var(--line);
+    border-radius:6px;margin-top:14px;
+  }
+  .np-freq{font-family:"IBM Plex Mono",monospace;font-size:17px;font-weight:600;
+           font-variant-numeric:tabular-nums}
+  .np-name{font-size:13px;color:var(--muted)}
+  .np-idle{font-size:13px;color:var(--faint)}
+  .stopbtn{
+    font-family:"IBM Plex Mono",monospace;font-size:11px;padding:5px 12px;
+    border:1px solid var(--alert);color:var(--alert);background:none;
+    border-radius:5px;cursor:pointer;margin-left:auto;
+  }
+  .stopbtn:hover{background:var(--alert);color:#fff}
+  .grp{margin-top:20px}
+  .grp-h{
+    font-family:"IBM Plex Mono",monospace;font-size:11px;letter-spacing:.08em;
+    text-transform:uppercase;color:var(--accent);margin:0 0 3px;font-weight:600;
+  }
+  .grp-note{font-size:12px;color:var(--muted);margin:0 0 9px;max-width:70ch}
+  .stlist{display:grid;grid-template-columns:repeat(auto-fill,minmax(212px,1fr));gap:7px}
+  .st{
+    display:flex;flex-direction:column;gap:2px;text-align:left;
+    padding:8px 11px;border:1px solid var(--line);border-radius:5px;
+    background:var(--surface);cursor:pointer;
+  }
+  .st:hover{border-color:var(--accent)}
+  .st:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .st[aria-pressed="true"]{border-color:var(--live);background:color-mix(in srgb,var(--live) 10%,transparent)}
+  .st-f{font-family:"IBM Plex Mono",monospace;font-size:12.5px;font-weight:600;
+        font-variant-numeric:tabular-nums}
+  .st-n{font-size:12px;color:var(--text)}
+  .st-note{font-size:11px;color:var(--faint);line-height:1.35}
+  .st.data{opacity:.55;cursor:not-allowed}
+  .badge{
+    font-family:"IBM Plex Mono",monospace;font-size:9px;letter-spacing:.05em;
+    padding:1px 5px;border-radius:3px;margin-left:6px;text-transform:uppercase;
+  }
+  .b-meas{background:color-mix(in srgb,var(--ok) 18%,transparent);color:var(--ok)}
+  .b-prio{background:var(--alert);color:#fff}
+  .b-enc{background:color-mix(in srgb,var(--warn) 20%,transparent);color:var(--warn)}
+
+  .empty{padding:44px 20px;text-align:center;color:var(--faint);font-size:14px}
+  footer{margin-top:22px;font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--faint)}
+  @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+  /* ---- map, patterns and entity views ---- */
+  .panelhead{
+    display:flex;gap:8px;align-items:center;flex-wrap:wrap;
+    padding:11px 0 13px;border-bottom:1px solid var(--line);
+  }
+  .panelhead .spacer{margin-left:auto}
+  .note{
+    font-family:"IBM Plex Mono",monospace;font-size:10.5px;color:var(--faint);
+    padding:8px 0 0;
+  }
+
+  .mapwrap{
+    position:relative;margin-top:14px;border:1px solid var(--line);
+    border-radius:10px;overflow:hidden;background:var(--surface);
+  }
+  #mapcanvas{display:block;width:100%;height:auto;cursor:crosshair}
+  .maptip{
+    position:absolute;pointer-events:none;opacity:0;transition:opacity .12s;
+    background:var(--surface-2);border:1px solid var(--line);border-radius:6px;
+    padding:6px 9px;font-family:"IBM Plex Mono",monospace;font-size:11px;
+    color:var(--text);max-width:250px;box-shadow:0 4px 14px rgba(0,0,0,.18);
+  }
+  .maptip.on{opacity:1}
+  .legend{
+    display:flex;gap:14px;flex-wrap:wrap;padding:9px 12px;
+    border-top:1px solid var(--line);background:var(--surface-2);
+    font-family:"IBM Plex Mono",monospace;font-size:10.5px;color:var(--muted);
+  }
+  .legend i{display:inline-block;width:16px;height:3px;border-radius:2px;
+    margin-right:5px;vertical-align:middle}
+
+  .tracklist{margin-top:12px;display:grid;gap:6px}
+  .trackrow{
+    display:grid;grid-template-columns:74px 1fr auto;gap:10px;align-items:center;
+    padding:8px 11px;border:1px solid var(--line);border-radius:8px;
+    background:var(--surface);cursor:pointer;font-size:12.5px;
+  }
+  .trackrow:hover{border-color:var(--accent)}
+  .trackrow .hex{font-family:"IBM Plex Mono",monospace;font-size:11.5px;color:var(--accent)}
+  .trackrow .meta{
+    font-family:"IBM Plex Mono",monospace;font-size:10.5px;color:var(--faint);
+    text-align:right;font-variant-numeric:tabular-nums;
+  }
+
+  /* heatmap */
+  .heat{margin-top:16px}
+  .heat h3{
+    font-size:12px;margin:0 0 7px;font-weight:600;letter-spacing:.02em;
+    display:flex;gap:8px;align-items:baseline;
+  }
+  .heat h3 span{font-family:"IBM Plex Mono",monospace;font-size:10.5px;color:var(--faint);font-weight:400}
+  .grid{
+    display:grid;grid-template-columns:34px repeat(24,1fr);gap:2px;
+    overflow-x:auto;
+    font-family:"IBM Plex Mono",monospace;font-size:9px;
+  }
+  .grid .lab{color:var(--faint);display:flex;align-items:center;height:16px;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .grid.wide{grid-template-columns:86px repeat(24,1fr)}
+  .grid .hh{color:var(--faint);text-align:center;height:12px;line-height:12px}
+  .cell{
+    height:16px;border-radius:2px;background:var(--surface-2);
+    border:1px solid transparent;
+  }
+  .cell[data-n]:hover{border-color:var(--accent)}
+  .scale{
+    display:flex;align-items:center;gap:5px;margin-top:8px;
+    font-family:"IBM Plex Mono",monospace;font-size:10px;color:var(--faint);
+  }
+  .scale b{display:inline-block;width:15px;height:10px;border-radius:2px;font-weight:400}
+
+  /* entity drawer */
+  .drawer{
+    position:fixed;inset:0;background:rgba(8,14,20,.45);z-index:40;
+    display:flex;justify-content:flex-end;
+  }
+  .drawer[hidden]{display:none}
+  .drawerbody{
+    width:min(560px,100%);background:var(--bg);height:100%;overflow-y:auto;
+    padding:20px 22px 60px;border-left:1px solid var(--line);
+  }
+  /* On a phone min(560px,100%) resolved to the full width, so the
+     tap-the-scrim dismiss had no scrim left to tap and iOS has no Escape key
+     -- the only way out was one small button. Leave a gutter to tap.
+     This MUST come after the rule above: same specificity, later wins, and
+     placing it in the earlier mobile block silently did nothing. */
+  @media(max-width:640px){
+    .drawerbody{width:88%}
+  }
+  .drawerbody h2{font-size:16px;margin:0 0 3px;word-break:break-all}
+  .drawerbody .sub2{
+    font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--faint);
+    margin-bottom:14px;
+  }
+  .kv{
+    display:grid;grid-template-columns:auto 1fr;gap:4px 14px;
+    font-family:"IBM Plex Mono",monospace;font-size:11.5px;margin-bottom:16px;
+  }
+  .kv dt{color:var(--faint)}
+  .kv dd{margin:0;font-variant-numeric:tabular-nums}
+  .drawer .close{
+    position:absolute;top:16px;right:20px;background:var(--surface);
+    border:1px solid var(--line);border-radius:99px;padding:4px 12px;
+    font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--muted);
+    cursor:pointer;
+  }
+  .spark{display:flex;gap:2px;align-items:flex-end;height:38px;margin-bottom:16px}
+  /* trend tiles: a number is the state, the sparkline is whether it is moving */
+  .htiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:11px}
+  .htile{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:11px 12px}
+  .htile .hl{font-family:"IBM Plex Mono",monospace;font-size:9.5px;letter-spacing:.07em;
+             text-transform:uppercase;color:var(--faint)}
+  .htile .hv{font-family:"IBM Plex Mono",monospace;font-size:19px;font-weight:600;
+             font-variant-numeric:tabular-nums;margin:2px 0 1px}
+  .htile .hr{font-family:"IBM Plex Mono",monospace;font-size:10px;color:var(--faint);
+             font-variant-numeric:tabular-nums}
+  .htile .hq{font-size:10.5px;color:var(--muted);margin-top:6px;line-height:1.35}
+  .hspark{display:flex;gap:1px;align-items:flex-end;height:26px;margin-top:7px}
+  .hspark i{flex:1;background:var(--accent);border-radius:1px 1px 0 0;min-height:1px;opacity:.7}
+  /* availability strip: one cell per sample, so an outage that healed is still visible */
+  .avail{display:flex;gap:1px;height:13px;margin-top:4px}
+  .avail i{flex:1;border-radius:1px;background:var(--ok)}
+  .avail i.dn{background:var(--alert)}
+  .prow{display:grid;grid-template-columns:96px 62px 1fr;gap:11px;align-items:center;
+        padding:6px 0;border-bottom:1px solid var(--line)}
+  .prow:last-child{border-bottom:0}
+  .spark i{flex:1;background:var(--accent);border-radius:1px 1px 0 0;min-height:1px;opacity:.75}
+  .evrow{
+    display:grid;grid-template-columns:64px 1fr;gap:9px;padding:5px 0;
+    border-bottom:1px solid var(--line);font-size:12px;
+  }
+  .evrow time{font-family:"IBM Plex Mono",monospace;font-size:10.5px;color:var(--faint)}
+  .sechead{
+    font-size:11px;text-transform:uppercase;letter-spacing:.07em;
+    color:var(--faint);margin:18px 0 6px;font-weight:600;
+  }
+
+  .actbar{
+    display:flex;gap:7px;align-items:center;flex-wrap:wrap;padding:10px 0 12px;
+    border-bottom:1px solid var(--line);margin-bottom:12px;
+  }
+  .actbar .spacer{margin-left:auto}
+  .st .heard{
+    display:block;font-family:"IBM Plex Mono",monospace;font-size:10px;
+    color:var(--live);margin-top:3px;
+  }
+  .st .heard.cold{color:var(--faint)}
+  .st.live{border-color:var(--live)}
+  .badge.b-live{background:var(--live);color:var(--bg)}
+  .offdir{
+    margin-top:16px;padding:11px 13px;border:1px dashed var(--line);
+    border-radius:9px;background:var(--surface);
+  }
+  .offdir p{margin:0 0 7px;font-size:12px;color:var(--muted)}
+  .offdir .row{
+    display:flex;gap:10px;align-items:baseline;padding:3px 0;
+    font-family:"IBM Plex Mono",monospace;font-size:11.5px;
+  }
+
+  /* ---- environment ---- */
+  .envgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(272px,1fr));gap:12px;margin-top:14px}
+  .sensor{
+    background:var(--surface);border:1px solid var(--line);border-radius:10px;
+    padding:14px 16px;
+  }
+  .sensor.stale{opacity:.62;border-style:dashed}
+  .sensor h4{
+    margin:0 0 2px;font-size:13.5px;font-weight:600;
+    display:flex;align-items:center;gap:7px;flex-wrap:wrap;
+  }
+  .sensor .key{
+    font-family:"IBM Plex Mono",monospace;font-size:10px;color:var(--faint);
+    margin-bottom:11px;word-break:break-all;
+  }
+  .owner{
+    font-family:"IBM Plex Mono",monospace;font-size:9.5px;letter-spacing:.06em;
+    text-transform:uppercase;padding:1.5px 7px;border-radius:99px;
+    border:1px solid var(--line);color:var(--faint);white-space:nowrap;
+  }
+  .owner.mine{border-color:var(--ok);color:var(--ok)}
+  .metric{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:end;margin-bottom:9px}
+  .metric .v{
+    font-family:"IBM Plex Mono",monospace;font-size:20px;font-weight:600;
+    font-variant-numeric:tabular-nums;line-height:1.1;
+  }
+  .metric .n{font-size:10.5px;color:var(--faint);text-transform:uppercase;letter-spacing:.06em}
+  .metric .age{font-family:"IBM Plex Mono",monospace;font-size:10px;color:var(--live)}
+  .metric .age.old{color:var(--warn)}
+  .spark2{display:flex;gap:1px;align-items:flex-end;height:26px;margin-top:4px}
+  .spark2 i{flex:1;background:var(--accent);opacity:.6;border-radius:1px 1px 0 0;min-height:1px}
+  .spark2 i:last-child{opacity:1}
+  .flat{
+    font-family:"IBM Plex Mono",monospace;font-size:9.5px;color:var(--warn);
+    margin-top:3px;
+  }
+
+  /* ---- imagery + lanes ---- */
+  .caps{display:grid;gap:16px;margin-top:14px}
+  .cap{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+  .cap h4{margin:0 0 3px;font-size:13.5px;font-weight:600;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .cap .sub3{font-family:"IBM Plex Mono",monospace;font-size:10.5px;color:var(--faint);margin-bottom:11px}
+  .shots{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:9px}
+  .shot{border:1px solid var(--line);border-radius:7px;overflow:hidden;background:var(--surface-2);cursor:zoom-in}
+  .shot img{display:block;width:100%;height:150px;object-fit:cover;background:var(--surface-2)}
+  .shot span{
+    display:block;font-family:"IBM Plex Mono",monospace;font-size:9.5px;
+    color:var(--faint);padding:4px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  }
+  .lightbox{position:fixed;inset:0;background:rgba(8,14,20,.9);z-index:60;display:flex;
+    align-items:center;justify-content:center;padding:24px;cursor:zoom-out}
+  .lightbox[hidden]{display:none}
+  .lightbox img{max-width:100%;max-height:100%;object-fit:contain}
+
+  .lanes{margin-top:14px;overflow-x:auto}
+  .lanes table{border-collapse:collapse;width:100%;font-size:12.5px;min-width:560px}
+  .lanes th{text-align:left;font-family:"IBM Plex Mono",monospace;font-size:10px;
+    letter-spacing:.06em;text-transform:uppercase;color:var(--faint);
+    padding:0 10px 6px 0;border-bottom:1px solid var(--line);font-weight:500}
+  .lanes td{padding:7px 10px 7px 0;border-bottom:1px solid var(--line);
+    font-variant-numeric:tabular-nums}
+  .lanes td.l{font-family:"IBM Plex Mono",monospace;font-size:11.5px}
+  .bar2{height:6px;border-radius:3px;background:var(--accent);min-width:2px}
+  .zero{color:var(--warn)}
+  .okquiet{color:var(--ok)}
+
+  /* ---- vehicles + feeds ---- */
+  .veh{background:var(--surface);border:1px solid var(--line);border-radius:10px;
+       padding:15px 17px;margin-top:14px}
+  .veh h4{margin:0 0 3px;font-size:14px;font-weight:600;display:flex;gap:9px;
+          align-items:center;flex-wrap:wrap}
+  .presence{font-family:"IBM Plex Mono",monospace;font-size:9.5px;
+    letter-spacing:.06em;text-transform:uppercase;padding:2px 8px;border-radius:99px;
+    border:1px solid var(--line);color:var(--faint);white-space:nowrap}
+  .presence.here{border-color:var(--ok);color:var(--ok)}
+  .presence.parked{border-color:var(--live);color:var(--live)}
+  .presence.away{border-color:var(--line);color:var(--faint)}
+  .veh .why{font-family:"IBM Plex Mono",monospace;font-size:10.5px;
+            color:var(--faint);margin-bottom:13px}
+  .tyres{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:11px}
+  .tyre{border:1px solid var(--line);border-radius:8px;padding:11px 13px;
+        background:var(--surface-2)}
+  .tyre .nm{font-size:10.5px;color:var(--faint);text-transform:uppercase;
+            letter-spacing:.05em;margin-bottom:3px}
+  .tyre .psi{font-family:"IBM Plex Mono",monospace;font-size:19px;font-weight:600;
+             font-variant-numeric:tabular-nums}
+  .tyre .sub4{font-family:"IBM Plex Mono",monospace;font-size:10px;color:var(--faint)}
+  .concern{color:var(--warn);font-size:12.5px;margin-top:11px}
+
+  .feedrow{display:grid;grid-template-columns:auto 1fr auto;gap:12px;
+    align-items:center;padding:11px 0;border-bottom:1px solid var(--line)}
+  .feedrow:last-child{border-bottom:none}
+  .fstate{font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.06em;
+    text-transform:uppercase;padding:2px 9px;border-radius:99px;
+    border:1px solid var(--line);color:var(--faint);white-space:nowrap}
+  .fstate.feeding{border-color:var(--ok);color:var(--ok)}
+  .fstate.idle{border-color:var(--live);color:var(--live)}
+  .dlink{display:grid;grid-template-columns:64px 54px 1fr;gap:9px;padding:5px 0;
+    border-bottom:1px solid var(--line);font-size:12px}
+  .dlink time{font-family:"IBM Plex Mono",monospace;font-size:10.5px;color:var(--faint)}
+  .dlink .src{font-family:"IBM Plex Mono",monospace;font-size:9.5px;
+    color:var(--live);text-transform:uppercase}
+  .dlink .src.rb{color:var(--warn)}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>bandwatch</h1>
+    <span class="sub" id="stats">loading…</span>
+    <span class="pip" id="pip">live</span>
+  </header>
+
+  <div class="tabs" role="tablist">
+    <button class="tab" id="tab-feed" role="tab" aria-selected="true">Activity</button>
+    <button class="tab" id="tab-sensors" role="tab" aria-selected="false">Sensors</button>
+    <button class="tab" id="tab-map" role="tab" aria-selected="false">Map</button>
+    <button class="tab" id="tab-patterns" role="tab" aria-selected="false">Patterns</button>
+    <button class="tab" id="tab-veh" role="tab" aria-selected="false">Vehicles</button>
+    <button class="tab" id="tab-img" role="tab" aria-selected="false">Imagery</button>
+    <button class="tab" id="tab-lanes" role="tab" aria-selected="false">Lanes</button>
+    <button class="tab" id="tab-env" role="tab" aria-selected="false">Environment</button>
+    <button class="tab" id="tab-tune" role="tab" aria-selected="false">Tune</button>
+  </div>
+
+  <div class="bar" role="group" aria-label="Filter feed">
+    <button class="chip" data-kind="all" aria-pressed="true">All</button>
+    <button class="chip" data-kind="voice" aria-pressed="false">Voice</button>
+    <button class="chip" data-kind="adsb" aria-pressed="false">Aircraft</button>
+    <button class="chip" data-kind="ism" aria-pressed="false">Sensors</button>
+    <button class="chip" data-kind="pager" aria-pressed="false">Pagers</button>
+    <button class="chip" data-kind="acars" aria-pressed="false">AC text</button>
+    <input type="search" id="q" placeholder="search transcripts and device IDs…"
+           aria-label="Search transcripts and device IDs">
+  </div>
+
+  <div class="ctl" role="group" aria-label="Pipeline controls">
+    <span class="ctl-label">Controls</span>
+    <button class="toggle" id="t-pipeline" data-on="true" type="button">
+      <span class="led"></span><span class="lbl">Scanning</span>
+    </button>
+    <button class="toggle" id="t-models" data-on="true" type="button">
+      <span class="led"></span><span class="lbl">Models</span>
+    </button>
+    <button class="toggle" id="t-transcribe" data-on="false" type="button">
+      <span class="led"></span><span class="lbl">Transcription</span>
+    </button>
+    <button class="toggle danger" id="t-notify" data-on="false" type="button">
+      <span class="led"></span><span class="lbl">Signal alerts</span>
+    </button>
+    <span class="ctl-note" id="ctl-note">Models off frees the GPU for other work.</span>
+    <span class="wdstat" id="wdstat" title="When the watchdog last ran"></span>
+  </div>
+  <div class="modes" role="group" aria-label="Coverage mode">
+    <span class="ctl-label">Mode</span>
+    <span id="modelist" style="display:contents"></span>
+    <button class="toggle" id="t-sched" data-on="true" type="button">
+      <span class="led"></span><span class="lbl">Schedule</span>
+    </button>
+    <span class="sched-note" id="sched-note"></span>
+  </div>
+
+  <div class="bar hidden" id="devbar" role="group" aria-label="Filter sensors">
+    <span class="chip" data-dk="all" aria-pressed="true">All</span>
+    <span class="chip" data-dk="ism" aria-pressed="false">Sensors</span>
+    <span class="chip" data-dk="adsb" aria-pressed="false">Aircraft</span>
+    <span class="chip" data-dk="pager" aria-pressed="false">Pagers</span>
+    <span class="chip" data-since="" aria-pressed="true">Ever</span>
+    <span class="chip" data-since="1" aria-pressed="false">1h</span>
+    <span class="chip" data-since="24" aria-pressed="false">24h</span>
+    <span class="chip" data-since="168" aria-pressed="false">7d</span>
+    <input type="search" id="dq" placeholder="filter by device id…" aria-label="Filter devices">
+  </div>
+
+  <div class="list" id="list"><div class="empty">loading…</div></div>
+  <div class="list hidden" id="devlist"></div>
+
+  <div class="hidden" id="tunepanel">
+    <div class="nowplaying" id="nowplaying"></div>
+    <div id="stations"></div>
+  </div>
+  <div class="hidden" id="vehpanel">
+    <div class="panelhead"><span class="note" id="vehstat"></span></div>
+    <div id="vehicles"></div>
+    <div id="feedbox" style="margin-top:26px"></div>
+  </div>
+
+  <div class="hidden" id="imgpanel">
+    <div class="panelhead"><span class="note" id="capstat"></span></div>
+    <div class="caps" id="caps"></div>
+  </div>
+
+  <div class="hidden" id="lanepanel">
+    <div class="panelhead"><span class="note" id="lanestat"></span></div>
+    <div class="lanes" id="lanes"></div>
+    <p class="note" id="lanenote"></p>
+
+    <div class="panelhead" style="margin-top:22px">
+      <h2>Transcription</h2><span class="note" id="trxstat"></span>
+    </div>
+    <div class="lanes" id="trx"></div>
+    <p class="note" id="trxnote"></p>
+
+    <div class="panelhead" style="margin-top:22px">
+      <h2>System health</h2><span class="note" id="hstat"></span>
+    </div>
+    <div id="health"></div>
+    <p class="note" id="hnote"></p>
+  </div>
+
+  <div class="hidden" id="envpanel">
+    <div class="panelhead" role="group" aria-label="Environment window">
+      <button class="chip" data-eh="6" aria-pressed="false">6h</button>
+      <button class="chip" data-eh="24" aria-pressed="true">24h</button>
+      <button class="chip" data-eh="72" aria-pressed="false">3d</button>
+      <span class="spacer"></span>
+      <span class="note" id="envstat"></span>
+    </div>
+    <div class="envgrid" id="envgrid"></div>
+    <p class="note" id="envnote"></p>
+  </div>
+
+  <div class="hidden" id="mappanel">
+    <div class="panelhead" role="group" aria-label="Map window">
+      <button class="chip" data-mh="1" aria-pressed="false">1h</button>
+      <button class="chip" data-mh="6" aria-pressed="true">6h</button>
+      <button class="chip" data-mh="24" aria-pressed="false">24h</button>
+      <button class="chip" data-mh="72" aria-pressed="false">3d</button>
+      <span class="spacer"></span>
+      <span class="note" id="mapstat"></span>
+    </div>
+    <div class="mapwrap">
+      <canvas id="mapcanvas" width="1840" height="1120"></canvas>
+      <div class="maptip" id="maptip"></div>
+      <div class="legend" id="maplegend"></div>
+    </div>
+    <div class="tracklist" id="tracklist"></div>
+    <p class="note" id="mapnote"></p>
+  </div>
+
+  <div class="hidden" id="patpanel">
+    <div class="panelhead" role="group" aria-label="Pattern window">
+      <button class="chip" data-pd="2" aria-pressed="false">2d</button>
+      <button class="chip" data-pd="7" aria-pressed="false">7d</button>
+      <button class="chip" data-pd="14" aria-pressed="true">14d</button>
+      <span class="spacer"></span>
+      <span class="note" id="patstat"></span>
+    </div>
+    <div id="patbody"></div>
+  </div>
+
+  <footer id="foot"></footer>
+</div>
+
+<div class="lightbox" id="lightbox" hidden><img alt="capture"></div>
+<div class="drawer" id="drawer" hidden>
+  <div class="drawerbody" id="drawerbody"></div>
+  <button class="close" id="drawerclose" type="button">close</button>
+</div>
+
+<script>
+const LABEL = {ism:"Sensor", adsb:"Aircraft", pager:"Pager", voice:"Voice", acars:"AC text"};
+let kind = "all", search = "", timer = null;
+
+function esc(s){
+  return String(s == null ? "" : s).replace(/[&<>"']/g,
+    c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+function clock(ts){
+  const d = new Date(ts);
+  return isNaN(d) ? esc(ts).slice(11,19)
+                  : d.toLocaleTimeString([], {hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:false});
+}
+
+function voiceRow(it){
+  const hit = it.hit ? ' hot' : '';
+  const tag = it.hit ? '<span class="tag t-hit">Watchlist</span>'
+                     : '<span class="tag t-voice">Voice</span>';
+  const tr = it.transcript
+    ? '<p class="transcript">' + esc(it.transcript) + '</p>'
+    : '<p class="transcript pending">awaiting transcription…</p>';
+  const audio = it.audio
+    ? '<audio controls preload="none" src="/audio/' + encodeURIComponent(it.audio) + '"></audio>'
+    : '';
+  const dur = it.duration ? Number(it.duration).toFixed(1) + ' s' : '';
+  const keep = '<button class="keep" data-vid="' + it.id + '" type="button" aria-pressed="'
+    + (it.preserved ? 'true' : 'false') + '" title="Exempt from the retention sweep and hash it">'
+    + (it.preserved ? 'kept' : 'keep') + '</button>';
+  const hash = it.preserved && it.sha256
+    ? '<p class="hashline">sha256 ' + esc(it.sha256) + '</p>' : '';
+  const freq = it.freq ? Number(it.freq).toFixed(4) + ' MHz' : '';
+  return '<div class="row' + hit + '">'
+    + '<span class="ts">' + clock(it.ts) + '</span>'
+    + '<span class="tagcell">' + tag + '</span>'
+    + '<div><p class="title-line">' + esc(it.channel || "voice")
+    + (freq ? ' &middot; <span class="mono">' + freq + '</span>' : '') + keep + '</p>'
+    + (dur ? '<p class="meta">' + dur + '</p>' : '')
+    + tr + audio + hash + '</div></div>';
+}
+
+function eventRow(it){
+  const k = it.kind;
+  const many = it.count > 1;
+  const span = many && it.oldest && it.oldest !== it.ts
+    ? clock(it.oldest) + '–' + clock(it.ts) : '';
+  return '<div class="row">'
+    + '<span class="ts">' + clock(it.ts) + '</span>'
+    + '<span class="tagcell"><span class="tag t-' + esc(k) + '">'
+    + esc(LABEL[k] || k) + '</span></span>'
+    + '<div><p class="title-line">' + esc(it.device)
+    + (many ? '<span class="count">&times;' + it.count + '</span>' : '') + '</p>'
+    + '<p class="meta">' + esc(it.summary || "")
+    + (span ? ' &middot; ' + span : '')
+    + ' &middot; <span class="mono">' + esc(it.lane) + '</span></p></div></div>';
+}
+
+async function load(){
+  const url = '/api/feed?kind=' + encodeURIComponent(kind)
+            + '&q=' + encodeURIComponent(search);
+  let d;
+  try {
+    const r = await fetch(url);
+    if(!r.ok) throw new Error('HTTP ' + r.status);
+    d = await r.json();
+  } catch(e){
+    document.getElementById('pip').className = 'pip stale';
+    document.getElementById('pip').textContent = 'disconnected';
+    return;
+  }
+  document.getElementById('pip').className = 'pip';
+  document.getElementById('pip').textContent = 'live';
+  paintControls(d.controls);
+
+  const s = d.stats || {};
+  document.getElementById('stats').textContent =
+    (s.voice||0) + ' voice · ' + (s.adsb||0) + ' aircraft · '
+    + (s.ism||0) + ' sensor · ' + (s.pager||0) + ' pager · '
+    + (s.devices||0) + ' devices seen';
+
+  const list = document.getElementById('list');
+  if(!d.items || !d.items.length){
+    list.innerHTML = '<div class="empty">Nothing matches yet.</div>';
+  } else {
+    list.innerHTML = d.items
+      .map(it => it.type === 'voice' ? voiceRow(it) : eventRow(it)).join('');
+  }
+  document.querySelectorAll('#list .keep').forEach(b => {
+    b.addEventListener('click', async (ev) => {
+      ev.stopPropagation();
+      const on = b.getAttribute('aria-pressed') !== 'true';
+      b.setAttribute('aria-pressed', String(on));
+      b.textContent = on ? 'kept' : 'keep';
+      try {
+        await fetch('/api/preserve', {method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({kind:'voice', id:Number(b.dataset.vid), preserve:on})});
+        load();
+      } catch(e){ b.setAttribute('aria-pressed', String(!on)); }
+    });
+  });
+  document.getElementById('foot').textContent =
+    'showing ' + (d.items ? d.items.length : 0)
+    + ' rows · repeats within 10 min collapse into one · refreshed '
+    + new Date().toLocaleTimeString([], {hour12:false});
+}
+
+const CTL = {
+  't-pipeline': {on:'pipeline_start', off:'pipeline_stop', key:'pipeline_running',
+                 note:'Scanning stopped — both dongles released for SDR++ or SDRTrunk.'},
+  't-models':   {on:'models_on',      off:'models_off',    key:'models_enabled',
+                 note:'Models off — transcription and summaries pause, the GPU is free for other work. Events keep logging.'},
+  't-transcribe':{on:'transcribe_on',  off:'transcribe_off',key:'transcribe_enabled',
+                 note:'Transcription paused — recordings still capture and queue, nothing is sent to Whisper.'},
+  't-sched':    {on:'schedule_on',    off:'schedule_off',  key:'schedule_enabled',
+                 note:'Schedule off — the mode stays where you put it until you change it.'},
+  't-notify':   {on:'notify_on',      off:'notify_off',    key:'notify_enabled',
+                 note:'Signal alerts off — everything still logs here, nothing reaches your phone.'}
+};
+
+function paintModes(c){
+  const box = document.getElementById('modelist');
+  if(!box || !c.profiles) return;
+  box.innerHTML = c.profiles.map(p =>
+    '<button class="mode' + (p.event ? ' event' : '') + '" data-p="' + esc(p.name)
+    + '" title="' + esc(p.description) + '" type="button" aria-pressed="'
+    + (p.name === c.profile ? 'true' : 'false') + '">' + esc(p.name) + '</button>').join('');
+  box.querySelectorAll('.mode').forEach(b => {
+    b.addEventListener('click', async () => {
+      document.getElementById('sched-note').textContent = 'switching to ' + b.dataset.p + '…';
+      try {
+        const r = await fetch('/api/control', {method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({action:'profile', profile:b.dataset.p})});
+        paintControls((await r.json()).controls);
+      } catch(e){ document.getElementById('sched-note').textContent = 'Could not reach the server.'; }
+      setTimeout(load, 6000);
+    });
+  });
+  const el = document.getElementById('t-sched');
+  if(el) el.dataset.on = String(!!c.schedule_enabled);
+  const note = document.getElementById('sched-note');
+  if(note){
+    if(c.override_until && c.override_profile){
+      const t = new Date(c.override_until);
+      note.textContent = isNaN(t) ? 'manual mode held'
+        : 'held on ' + c.override_profile + ' until '
+          + t.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',hour12:false})
+          + ', then the schedule resumes';
+    } else if(c.schedule_enabled){
+      note.textContent = 'schedule running: watch-day 06:00–22:00, watch-night 22:00–06:00';
+    } else {
+      note.textContent = 'schedule off — the mode stays where you put it';
+    }
+  }
+}
+
+function paintWatchdog(w){
+  /* A silent watchdog log means "healthy" OR "has not run in two days", and
+     the second is what actually happened here. Show when it last RAN,
+     separately from what it found, so the checker itself is observable. */
+  const el = document.getElementById('wdstat');
+  if(!el) return;
+  if(!w || !w.last_check){
+    el.className = 'wdstat bad';
+    el.textContent = 'watchdog: has never reported';
+    return;
+  }
+  const mins = Math.round((Date.now() - new Date(w.last_check).getTime())/60000);
+  const stale = mins > 12;            // it is supposed to run every 5 minutes
+  el.className = 'wdstat' + (w.faults ? ' bad' : (stale ? ' stale' : ''));
+  const found = w.faults
+    ? w.faults + ' fault' + (w.faults === 1 ? '' : 's') + ': ' + (w.detail||[]).join('; ')
+    : 'no faults';
+  el.textContent = 'watchdog: '
+    + (isNaN(mins) ? 'unknown' : (mins < 1 ? 'just now' : mins + 'm ago'))
+    + (stale ? ' \u2014 OVERDUE' : '') + ' \u00b7 ' + found;
+}
+
+function paintControls(c){
+  if(!c) return;
+  paintModes(c);
+  paintWatchdog(c.watchdog);
+  if(c.listen){ listenState = c.listen; if(view==='tune'){ paintNowPlaying(); paintStations(); } }
+  for(const [id, spec] of Object.entries(CTL)){
+    const el = document.getElementById(id);
+    if(el) el.dataset.on = String(!!c[spec.key]);
+  }
+}
+
+for(const [id, spec] of Object.entries(CTL)){
+  const el = document.getElementById(id);
+  if(!el) continue;
+  el.addEventListener('click', async () => {
+    const isOn = el.dataset.on === 'true';
+    const action = isOn ? spec.off : spec.on;
+    el.dataset.on = String(!isOn);
+    document.getElementById('ctl-note').textContent =
+      isOn ? spec.note : 'Enabled.';
+    try {
+      const r = await fetch('/api/control', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({action})
+      });
+      const d = await r.json();
+      paintControls(d.controls);
+    } catch(e){
+      el.dataset.on = String(isOn);
+      document.getElementById('ctl-note').textContent = 'Could not reach the server.';
+    }
+    setTimeout(load, 2500);
+  });
+}
+
+// ---- sensor browser ----
+let view = 'feed', dkind = 'all', dsince = '', dsearch = '', dorder = 'last_seen', dtimer = null;
+
+function ago(ts){
+  const d = new Date(ts);
+  if(isNaN(d)) return '—';
+  const s = (Date.now() - d.getTime())/1000;
+  if(s < 90) return Math.max(0,Math.round(s)) + 's';
+  if(s < 5400) return Math.round(s/60) + 'm';
+  if(s < 172800) return Math.round(s/3600) + 'h';
+  return Math.round(s/86400) + 'd';
+}
+
+function sparkHtml(a){
+  const max = Math.max(1, ...a);
+  return '<span class="spark" title="events per hour, last 24h">'
+    + a.map(v => '<i class="' + (v ? 'on' : '')
+        + '" style="height:' + Math.max(1, Math.round(v/max*22)) + 'px"></i>').join('')
+    + '</span>';
+}
+
+async function loadDevices(){
+  const url = '/api/devices?kind=' + encodeURIComponent(dkind)
+            + '&since=' + encodeURIComponent(dsince)
+            + '&q=' + encodeURIComponent(dsearch)
+            + '&order=' + encodeURIComponent(dorder);
+  let d;
+  try { d = await (await fetch(url)).json(); }
+  catch(e){ document.getElementById('devlist').innerHTML =
+              '<div class="empty">Could not reach the server.</div>'; return; }
+  const rows = d.devices || [];
+  const head = '<div class="dev-row head">'
+    + '<span data-o="name">Device</span><span data-o="count" style="text-align:right">Seen</span>'
+    + '<span data-o="last_seen" style="text-align:right">Last</span>'
+    + '<span>24h activity</span></div>';
+  const body = rows.map(r =>
+      '<div class="dev-row dev-click" data-dev="' + esc(r.device_key) + '">'
+    + '<div><div class="dev-name">' + esc(r.device_key) + '</div>'
+    + '<div class="dev-sum">' + esc(r.summary || LABEL[r.kind] || r.kind) + '</div></div>'
+    + '<div class="dev-n">' + r.seen_count + '</div>'
+    + '<div class="dev-when">' + ago(r.last_seen) + '</div>'
+    + '<div>' + sparkHtml(r.spark || []) + '</div></div>').join('');
+  document.getElementById('devlist').innerHTML =
+    rows.length ? head + body : '<div class="empty">No devices match.</div>';
+  document.getElementById('foot').textContent =
+    rows.length + ' devices · click one to see its activity in the feed';
+
+  document.querySelectorAll('#devlist .dev-click').forEach(el => {
+    el.addEventListener('click', () => {
+      search = el.dataset.dev;
+      document.getElementById('q').value = search;
+      kind = 'all';
+      document.querySelectorAll('.bar .chip[data-kind]').forEach(x =>
+        x.setAttribute('aria-pressed', x.dataset.kind === 'all' ? 'true' : 'false'));
+      setView('feed');
+      load();
+    });
+  });
+  document.querySelectorAll('#devlist .head span[data-o]').forEach(el => {
+    el.addEventListener('click', () => { dorder = el.dataset.o; loadDevices(); });
+  });
+}
+
+// ---- tune ----
+let stationsCache = null, listenState = {listening:false};
+
+function paintNowPlaying(){
+  const el = document.getElementById('nowplaying');
+  if(!el) return;
+  if(listenState && listenState.listening){
+    el.innerHTML =
+      '<span class="np-freq">' + Number(listenState.freq).toFixed(4) + ' MHz</span>'
+      + '<span class="np-name">' + esc((listenState.mode||'').toUpperCase())
+      + ' · radio ' + esc(String(listenState.device)) + ' borrowed from the rotation</span>'
+      + '<audio controls autoplay src="/listen.mp3?t=' + Date.now() + '"></audio>'
+      + '<button class="stopbtn" id="stoplisten" type="button">Stop &amp; return radio</button>';
+    const sb = document.getElementById('stoplisten');
+    if(sb) sb.addEventListener('click', async () => {
+      await fetch('/api/control', {method:'POST',headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({action:'listen_stop'})});
+      listenState = {listening:false}; paintNowPlaying(); paintStations();
+    });
+  } else {
+    el.innerHTML = '<span class="np-idle">Nothing tuned. Pick a station — '
+      + 'it borrows the radio carrying the right antenna until you stop it.</span>';
+  }
+}
+
+function radioFor(freq){
+  // radio 0 = low-band antenna (118-174), radio 1 = high-band (225-1090).
+  // Tuning across that split means listening through the wrong antenna.
+  return freq < 200 ? 0 : 1;
+}
+
+async function tuneTo(freq, mode, name){
+  document.getElementById('nowplaying').innerHTML =
+    '<span class="np-idle">tuning ' + Number(freq).toFixed(4) + ' MHz…</span>';
+  try {
+    const r = await fetch('/api/listen', {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({freq:freq, mode:mode, device:radioFor(freq)})});
+    const d = await r.json();
+    if(d.error){ document.getElementById('nowplaying').innerHTML =
+      '<span class="np-idle">' + esc(d.error) + '</span>'; return; }
+    listenState = d.listen || {listening:true, freq:freq, mode:mode, device:radioFor(freq)};
+    paintNowPlaying(); paintStations();
+  } catch(e){
+    document.getElementById('nowplaying').innerHTML =
+      '<span class="np-idle">Could not reach the server.</span>';
+  }
+}
+
+function stationButton(st, g, isData){
+  const on = listenState.listening
+    && Math.abs(Number(listenState.freq) - st.f) < 0.0005;
+  const a = st.activity;
+  const live = isRecent(a);
+  const badges = (st.measured ? '<span class="badge b-meas">measured</span>' : '')
+    + (st.priority ? '<span class="badge b-prio">distress</span>' : '')
+    + (st.encrypted ? '<span class="badge b-enc">enc?</span>' : '')
+    + (live ? '<span class="badge b-live">active</span>' : '');
+  let heard = '';
+  if(a && a.last){
+    /* transmissions counted, not transcripts trusted: a rejected clip still
+       proves the frequency was busy, which is the question being asked here */
+    heard = '<span class="heard' + (live ? '' : ' cold') + '">'
+      + agoText(a.last) + ' · ' + a.n + ' tx'
+      + (a.seconds ? ' · ' + Math.round(a.seconds) + 's' : '')
+      + (a.watchlist ? ' · watchlist' : '') + '</span>';
+  }
+  return '<button class="st' + (isData ? ' data' : '') + (live ? ' live' : '') + '"'
+    + (isData ? ' disabled' : '') + ' type="button" aria-pressed="' + on + '"'
+    + ' data-f="' + st.f + '" data-m="' + esc(g.mode) + '">'
+    + '<span class="st-f">' + st.f.toFixed(4) + '</span>'
+    + '<span class="st-n">' + esc(st.name) + badges + '</span>'
+    + (st.note ? '<span class="st-note">' + esc(st.note) + '</span>' : '')
+    + heard + '</button>';
+}
+
+function paintStations(){
+  const box = document.getElementById('stations');
+  if(!box || !stationsCache) return;
+  const win = stationsCache.activity_window_h || activeHours;
+  let liveCount = 0;
+  (stationsCache.groups || []).forEach(g => (g.stations || []).forEach(
+    st => { if(isRecent(st.activity)) liveCount++; }));
+
+  let html = '<div class="actbar" id="actbar">'
+    + '<button class="chip" id="actonly" type="button" aria-pressed="'
+    + activeOnly + '">Recently active</button>'
+    + '<button class="chip" data-ah="1" aria-pressed="' + (activeHours===1)
+    + '">1h</button>'
+    + '<button class="chip" data-ah="6" aria-pressed="' + (activeHours===6)
+    + '">6h</button>'
+    + '<button class="chip" data-ah="24" aria-pressed="' + (activeHours===24)
+    + '">24h</button>'
+    + '<span class="spacer"></span><span class="note">' + liveCount
+    + ' heard in the last ' + win + 'h</span></div>';
+
+  if(activeOnly && !liveCount){
+    html += '<div class="empty">Nothing was heard in the last ' + win + 'h. '
+         + 'Voice lanes rotate, so silence here can also mean the radio was '
+         + 'tuned elsewhere.</div>';
+  }
+
+  /* when filtering, order by most recently heard rather than by band, because
+     the question being asked is "what is going off right now" */
+  if(activeOnly){
+    const rows = [];
+    (stationsCache.groups || []).forEach(g => (g.stations || []).forEach(st => {
+      if(!st.sweep && isRecent(st.activity)) rows.push([st, g]);
+    }));
+    rows.sort((p,q) => (q[0].activity.last || '').localeCompare(p[0].activity.last || ''));
+    html += '<div class="grp"><p class="grp-h">Heard recently</p><div class="stlist">'
+      + rows.map(([st,g]) => stationButton(st, g, g.mode === 'data')).join('')
+      + '</div></div>';
+  } else {
+    html += stationsCache.groups.map(g => {
+      const isData = (g.mode === 'data');
+      const items = g.stations.map(st =>
+        st.sweep ? '' : stationButton(st, g, isData)).join('');
+      return '<div class="grp"><p class="grp-h">' + esc(g.name) + '</p>'
+        + (g.note ? '<p class="grp-note">' + esc(g.note) + '</p>' : '')
+        + (isData ? '<p class="grp-note">Decoded by lanes, not listened to — '
+                  + 'these carry data, not audio.</p>' : '')
+        + '<div class="stlist">' + items + '</div></div>';
+    }).join('');
+  }
+
+  /* frequencies that produced audio but are not in the directory. These are
+     the interesting ones: something is transmitting that nothing has named. */
+  const un = (stationsCache.unmatched_activity || []).filter(isRecent);
+  if(un.length){
+    html += '<div class="offdir"><p><b>Heard, but not in the directory</b> — '
+      + 'recorded by a lane on a frequency the station list does not name.</p>'
+      + un.slice(0,12).map(e => '<div class="row"><span>'
+          + e.freq.toFixed(4) + '</span><span>' + esc(e.channel || '')
+          + '</span><span style="color:var(--faint)">' + agoText(e.last)
+          + ' · ' + e.n + ' tx</span></div>').join('')
+      + '</div>';
+  }
+
+  box.innerHTML = html;
+  box.querySelectorAll('.st:not(.data)').forEach(b => {
+    b.addEventListener('click', () =>
+      tuneTo(parseFloat(b.dataset.f), b.dataset.m, ''));
+  });
+}
+
+async function loadStations(force){
+  /* force=true re-fetches. Without it this returned cached data forever, so
+     the "recently active" list was the staleest thing on the page. */
+  if(force || !stationsCache){
+    try { stationsCache = await (await fetch('/api/stations?active_h='
+                                            + activeHours)).json(); }
+    catch(e){ document.getElementById('stations').innerHTML =
+      '<div class="empty">Could not load the station directory.</div>'; return; }
+  }
+  paintNowPlaying(); paintStations();
+}
+
+function setView(v){
+  view = v;
+  ['feed','sensors','map','patterns','veh','img','lanes','env','tune'].forEach(t =>
+    document.getElementById('tab-'+t).setAttribute('aria-selected', String(v===t)));
+  document.querySelector('.bar').classList.toggle('hidden', v!=='feed');
+  document.getElementById('devbar').classList.toggle('hidden', v!=='sensors');
+  document.getElementById('list').classList.toggle('hidden', v!=='feed');
+  document.getElementById('devlist').classList.toggle('hidden', v!=='sensors');
+  document.getElementById('tunepanel').classList.toggle('hidden', v!=='tune');
+  document.getElementById('mappanel').classList.toggle('hidden', v!=='map');
+  document.getElementById('patpanel').classList.toggle('hidden', v!=='patterns');
+  document.getElementById('envpanel').classList.toggle('hidden', v!=='env');
+  document.getElementById('imgpanel').classList.toggle('hidden', v!=='img');
+  document.getElementById('lanepanel').classList.toggle('hidden', v!=='lanes');
+  document.getElementById('vehpanel').classList.toggle('hidden', v!=='veh');
+  if(v==='sensors') loadDevices();
+  else if(v==='map') loadTracks();
+  else if(v==='patterns') loadPatterns();
+  else if(v==='env') loadEnvironment();
+  else if(v==='img') loadCaptures();
+  else if(v==='lanes') loadLanes();
+  else if(v==='veh') loadVehicles();
+  else if(v==='tune') loadStations();
+  else load();
+}
+document.getElementById('tab-tune').addEventListener('click', () => setView('tune'));
+document.getElementById('tab-map').addEventListener('click', () => setView('map'));
+document.getElementById('tab-patterns').addEventListener('click', () => setView('patterns'));
+document.getElementById('tab-env').addEventListener('click', () => setView('env'));
+document.getElementById('tab-feed').addEventListener('click', () => setView('feed'));
+document.getElementById('tab-sensors').addEventListener('click', () => setView('sensors'));
+
+document.querySelectorAll('#devbar .chip[data-dk]').forEach(b => {
+  b.addEventListener('click', () => {
+    document.querySelectorAll('#devbar .chip[data-dk]').forEach(x => x.setAttribute('aria-pressed','false'));
+    b.setAttribute('aria-pressed','true'); dkind = b.dataset.dk; loadDevices();
+  });
+});
+document.querySelectorAll('#devbar .chip[data-since]').forEach(b => {
+  b.addEventListener('click', () => {
+    document.querySelectorAll('#devbar .chip[data-since]').forEach(x => x.setAttribute('aria-pressed','false'));
+    b.setAttribute('aria-pressed','true'); dsince = b.dataset.since; loadDevices();
+  });
+});
+document.getElementById('dq').addEventListener('input', e => {
+  clearTimeout(dtimer); dsearch = e.target.value;
+  dtimer = setTimeout(loadDevices, 280);
+});
+
+document.querySelectorAll('.bar .chip[data-kind]').forEach(b => {
+  b.addEventListener('click', () => {
+    document.querySelectorAll('.bar .chip[data-kind]')
+            .forEach(x => x.setAttribute('aria-pressed','false'));
+    b.setAttribute('aria-pressed','true');
+    kind = b.dataset.kind;
+    load();
+  });
+});
+document.getElementById('q').addEventListener('input', e => {
+  clearTimeout(timer);
+  search = e.target.value;
+  timer = setTimeout(load, 280);
+});
+
+load();
+/* Only feed and sensors refreshed, so a phone left on Map, Lanes, Environment,
+   Patterns or Vehicles showed a frozen snapshot while the header pip still read
+   "live" -- the display asserting freshness it did not have. The heavier views
+   go on a slower tier rather than the 15s one: they aggregate over hours, so
+   15s buys nothing and costs a query every time. */
+let refreshTick = 0;
+setInterval(() => {
+  refreshTick++;
+  if(view==='feed') load();
+  else if(view==='sensors') loadDevices();
+  else if(refreshTick % 4 === 0){          /* every 60s */
+    if(view==='map') loadTracks();
+    else if(view==='patterns') loadPatterns();
+    else if(view==='env') loadEnvironment();
+    else if(view==='lanes') loadLanes();
+    else if(view==='veh') loadVehicles();
+    /* Tune lists which stations were heard RECENTLY, so being current is its
+       entire purpose -- and it was the one view never refreshed. Opening the
+       tab froze the list at that instant while the header pip still read
+       "live". Refreshing the directory does not disturb playback: the
+       now-playing panel keeps its own state. */
+    else if(view==='tune') loadStations(true);
+  }
+}, 15000);
+/* ============================ T9 · map ============================ */
+let mapHours = 6, mapData = null, mapProj = null;
+
+/* Tokens, not hexes: the canvas ground follows the theme, so hardcoding the
+   light palette drew dark red on near-black at about 2:1. And canvas silently
+   ignores a 'var(--x)' string, so altColor(null) used to paint whatever colour
+   happened to be set last -- both are resolved to real values here. */
+const ALT_BANDS = [
+  [0,     '--alert', 'ground / &lt;2k'],
+  [2000,  '--accent', '2–8k'],
+  [8000,  '--warn',  '8–18k'],
+  [18000, '--ok',    '18–30k'],
+  [30000, '--live',  '30k+'],
+];
+function cssVar(name){
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+         || '#888';
+}
+function altColor(ft){
+  if(ft == null) return cssVar('--faint');
+  let c = ALT_BANDS[0][1];
+  for(const [lo, col] of ALT_BANDS){ if(ft >= lo) c = col; }
+  return cssVar(c);
+}
+
+async function loadTracks(){
+  const stat = document.getElementById('mapstat');
+  stat.textContent = 'loading…';
+  try{
+    const r = await fetch('/api/tracks?since=' + mapHours);
+    mapData = await r.json();
+  }catch(e){ stat.textContent = 'could not load tracks'; return; }
+  drawMap();
+  paintTrackList();
+}
+
+function project(c, w, h, bounds, center){
+  /* Equirectangular, longitude compressed by cos(lat) so the aspect ratio is
+     true at this latitude. Range rings are drawn in nautical miles from the
+     centre so distance can be read off the picture rather than guessed. */
+  const pad = 30;
+  const latSpan = Math.max(0.05, (bounds.lat_max - bounds.lat_min) * 1.12);
+  const k = Math.cos(center.lat * Math.PI / 180);
+  const lonSpan = Math.max(0.05, (bounds.lon_max - bounds.lon_min) * 1.12);
+  const scale = Math.min((w - 2*pad) / (lonSpan * k), (h - 2*pad) / latSpan);
+  return {
+    x: lon => w/2 + (lon - center.lon) * k * scale,
+    y: lat => h/2 - (lat - center.lat) * scale,
+    nm: nm => (nm / 60.0) * scale,
+  };
+}
+
+/* Canvas pixels are not display pixels. The canvas is a fixed 1840x1120 shown
+   at ~343 CSS px on a phone and ~960 on the desktop, so anything sized in
+   canvas units renders 5.4x too small on the phone and 1.9x too small on the
+   desktop. mapScale() converts "CSS pixels I actually want" into canvas units.
+   Guarded against a zero-width rect, which happens if the map is drawn while
+   its panel is still hidden. */
+function mapScale(cv){
+  const shown = cv.getBoundingClientRect().width;
+  return shown > 0 ? cv.width / shown : 1;
+}
+function drawMap(){
+  const cv = document.getElementById('mapcanvas');
+  const g = cv.getContext('2d');
+  const w = cv.width, h = cv.height;
+  const k = mapScale(cv);
+  const px = n => Math.round(n * k);      /* CSS px -> canvas px */
+  const css = getComputedStyle(document.body);
+  const line = css.getPropertyValue('--line').trim();
+  const faint = css.getPropertyValue('--faint').trim();
+  const surface = css.getPropertyValue('--surface').trim();
+
+  g.clearRect(0,0,w,h);
+  g.fillStyle = surface; g.fillRect(0,0,w,h);
+
+  const d = mapData;
+  document.getElementById('mapstat').textContent =
+    d && d.tracks ? d.tracks.length + ' tracks · ' + mapHours + 'h' : '';
+  if(!d || !d.tracks || !d.tracks.length || !d.bounds){
+    g.fillStyle = faint;
+    g.font = px(15) + 'px "IBM Plex Mono", monospace';
+    g.textAlign = 'center';
+    g.fillText('no positions received in this window', w/2, h/2);
+    document.getElementById('mapnote').textContent = '';
+    return;
+  }
+  const p = project(g, w, h, d.bounds, d.center);
+  mapProj = p;
+
+  /* range rings */
+  g.strokeStyle = line; g.lineWidth = Math.max(1, px(1));
+  g.font = px(10) + 'px "IBM Plex Mono", monospace'; g.fillStyle = faint;
+  g.textAlign = 'left';
+  const ringAngle = -Math.PI * 0.75;         /* up and to the left, away from
+                                                 the busiest part of the field */
+  for(const nm of [10,25,50,100,150]){
+    const r = p.nm(nm);
+    if(r < px(10) || r > Math.max(w,h)) continue;
+    g.beginPath(); g.arc(w/2, h/2, r, 0, Math.PI*2); g.stroke();
+    const lx = w/2 + Math.cos(ringAngle)*r, ly = h/2 + Math.sin(ringAngle)*r;
+    const t = nm + ' nm', tw = g.measureText(t).width;
+    g.fillStyle = surface;                   /* chip so the label stays readable
+                                                 where a track crosses the ring */
+    g.fillRect(lx - tw/2 - px(3), ly - px(7), tw + px(6), px(12));
+    g.fillStyle = faint;
+    g.textAlign = 'center';
+    g.fillText(t, lx, ly + px(3));
+    g.textAlign = 'left';
+  }
+  /* centre mark */
+  g.strokeStyle = faint; g.lineWidth = Math.max(1, px(1));
+  const cm = px(5);
+  g.beginPath(); g.moveTo(w/2-cm,h/2); g.lineTo(w/2+cm,h/2);
+  g.moveTo(w/2,h/2-cm); g.lineTo(w/2,h/2+cm); g.stroke();
+
+  /* tracks, oldest first so recent ones sit on top */
+  const ordered = d.tracks.slice().reverse();
+  const placed = [];   /* label anchors already drawn, for collision testing */
+  for(const t of ordered){
+    const pts = t.points;
+    g.lineWidth = Math.max(1.2, px(1.4)); g.lineJoin = 'round';
+    for(let i=1;i<pts.length;i++){
+      g.strokeStyle = altColor(pts[i][3]);
+      g.beginPath();
+      g.moveTo(p.x(pts[i-1][2]), p.y(pts[i-1][1]));
+      g.lineTo(p.x(pts[i][2]),   p.y(pts[i][1]));
+      g.stroke();
+    }
+    const last = pts[pts.length-1];
+    const lx = p.x(last[2]), ly = p.y(last[1]);
+    g.fillStyle = altColor(last[3]);
+    g.beginPath(); g.arc(lx, ly, Math.max(3, px(3)), 0, Math.PI*2); g.fill();
+    const name = (t.label || t.callsign || t.hex).split(' ')[0];
+    g.font = px(10.5) + 'px "IBM Plex Mono", monospace';
+    g.textAlign = 'left';
+    /* a label drawn over another label is worse than no label -- it reads as a
+       third aircraft that does not exist */
+    const clear = placed.every(q => Math.abs(q[0]-lx) > px(70)
+                                 || Math.abs(q[1]-ly) > px(12));
+    if(clear){
+      g.fillStyle = css.getPropertyValue('--text').trim();
+      g.fillText(name, lx + px(5), ly + px(3.5));
+      placed.push([lx, ly]);
+    }
+    t._px = [lx, ly];
+  }
+
+  document.getElementById('maplegend').innerHTML =
+    ALT_BANDS.map(b => '<span><i style="background:var('+b[1]+')"></i>'+b[2]+' ft</span>').join('')
+    + '<span style="margin-left:auto">centre: ' + esc(d.center.source) + '</span>';
+  document.getElementById('mapnote').textContent =
+    'Rings are nautical miles from the receiver. Tracks are ADS-B position '
+    + 'reports only; gaps mean the lane was tuned elsewhere, not that the '
+    + 'aircraft vanished.'
+    + (d.truncated ? '  Showing the ' + d.tracks.length + ' most recent of '
+        + d.total_tracks + ' aircraft.' : '');
+}
+
+document.getElementById('mapcanvas').addEventListener('mousemove', ev => {
+  const cv = ev.currentTarget, tip = document.getElementById('maptip');
+  if(!mapData || !mapData.tracks || !mapData.tracks.length){ tip.className='maptip'; return; }
+  const rect = cv.getBoundingClientRect();
+  const sx = cv.width / rect.width, sy = cv.height / rect.height;
+  const mx = (ev.clientX - rect.left) * sx, my = (ev.clientY - rect.top) * sy;
+  const hit = 26 * mapScale(cv);
+  let best = null, bd = hit*hit;
+  for(const t of mapData.tracks){
+    if(!t._px) continue;
+    const dx = t._px[0]-mx, dy = t._px[1]-my, dd = dx*dx+dy*dy;
+    if(dd < bd){ bd = dd; best = t; }
+  }
+  if(!best){ tip.className = 'maptip'; return; }
+  tip.className = 'maptip on';
+  tip.style.left = Math.min(rect.width - 240, ev.clientX - rect.left + 12) + 'px';
+  tip.style.top  = (ev.clientY - rect.top + 12) + 'px';
+  tip.innerHTML = '<b>' + esc(best.label || best.callsign || best.hex) + '</b><br>'
+    + esc(best.hex) + (best.squawk ? ' · squawk ' + esc(best.squawk) : '') + '<br>'
+    + (best.max_alt != null ? best.min_alt.toLocaleString() + '–'
+        + best.max_alt.toLocaleString() + ' ft<br>' : '')
+    + best.n + ' fixes · last ' + clock(best.last);
+});
+document.getElementById('mapcanvas').addEventListener('mouseleave',
+  () => { document.getElementById('maptip').className = 'maptip'; });
+document.getElementById('mapcanvas').addEventListener('click', ev => {
+  if(!mapData || !mapData.tracks) return;
+  const cv = ev.currentTarget, rect = cv.getBoundingClientRect();
+  const mx = (ev.clientX-rect.left)*(cv.width/rect.width);
+  const my = (ev.clientY-rect.top)*(cv.height/rect.height);
+  const hit = 26 * mapScale(cv);
+  let best=null, bd=hit*hit;
+  for(const t of mapData.tracks){
+    if(!t._px) continue;
+    const dx=t._px[0]-mx, dy=t._px[1]-my, dd=dx*dx+dy*dy;
+    if(dd<bd){ bd=dd; best=t; }
+  }
+  if(best) openEntity(best.hex);
+});
+
+function paintTrackList(){
+  const el = document.getElementById('tracklist');
+  const d = mapData;
+  if(!d || !d.tracks || !d.tracks.length){ el.innerHTML = ''; return; }
+  el.innerHTML = d.tracks.map(t =>
+    '<div class="trackrow" data-key="' + esc(t.hex) + '">'
+    + '<span class="hex">' + esc(t.hex) + '</span>'
+    + '<span>' + esc(t.label || t.callsign || 'unidentified') + '</span>'
+    + '<span class="meta">' + (t.max_alt != null ? t.max_alt.toLocaleString()+' ft · ' : '')
+    + t.n + ' fixes · ' + clock(t.last) + '</span></div>').join('');
+  el.querySelectorAll('.trackrow').forEach(r =>
+    r.addEventListener('click', () => openEntity(r.dataset.key)));
+}
+
+document.querySelectorAll('#mappanel .chip[data-mh]').forEach(b => {
+  b.addEventListener('click', () => {
+    document.querySelectorAll('#mappanel .chip[data-mh]')
+      .forEach(x => x.setAttribute('aria-pressed','false'));
+    b.setAttribute('aria-pressed','true');
+    mapHours = Number(b.dataset.mh); loadTracks();
+  });
+});
+
+/* ========================== T10 · patterns ========================== */
+let patDays = 14;
+
+function heatCell(n, max){
+  if(!n) return '<div class="cell"></div>';
+  const t = Math.min(1, Math.log1p(n) / Math.log1p(max || 1));
+  return '<div class="cell" data-n="' + n + '" title="' + n + ' events" '
+       + 'style="background:color-mix(in srgb, var(--accent) '
+       + Math.round(12 + t*88) + '%, var(--surface-2))"></div>';
+}
+
+function heatBlock(title, subtitle, grid, rowLabels){
+  let max = 0;
+  grid.forEach(r => r.forEach(v => { if(v > max) max = v; }));
+  const wide = rowLabels.some(l => String(l).length > 4);
+  let html = '<div class="heat"><h3>' + esc(title)
+    + '<span>' + esc(subtitle) + '</span></h3><div class="grid'
+    + (wide ? ' wide' : '') + '">';
+  html += '<div class="hh"></div>';
+  for(let h=0;h<24;h++) html += '<div class="hh">' + (h%3===0 ? h : '') + '</div>';
+  grid.forEach((row, i) => {
+    html += '<div class="lab" title="' + esc(rowLabels[i]) + '">'
+         + esc(rowLabels[i]) + '</div>';
+    row.forEach(v => { html += heatCell(v, max); });
+  });
+  html += '</div><div class="scale">less'
+    + [0,.25,.5,.75,1].map(t => '<b style="background:color-mix(in srgb, var(--accent) '
+        + Math.round(12+t*88) + '%, var(--surface-2))"></b>').join('')
+    + 'more · peak ' + max + '</div></div>';
+  return html;
+}
+
+async function loadPatterns(){
+  const body = document.getElementById('patbody');
+  const stat = document.getElementById('patstat');
+  stat.textContent = 'loading…';
+  let d;
+  try{
+    const r = await fetch('/api/patterns?days=' + patDays);
+    d = await r.json();
+  }catch(e){ body.innerHTML = '<div class="empty">Could not load patterns.</div>'; return; }
+  if(d.error){ body.innerHTML = '<div class="empty">' + esc(d.error) + '</div>'; return; }
+
+  const kinds = Object.keys(d.hourly).sort();
+  stat.textContent = d.tz + ' · ' + patDays + 'd';
+  if(!kinds.length && !Object.keys(d.voice||{}).length){
+    body.innerHTML = '<div class="empty">No events in this window.</div>'; return;
+  }
+  let html = '';
+  for(const k of kinds){
+    html += heatBlock(LABEL[k] || k,
+      d.hourly[k].reduce((a,b)=>a+b,0).toLocaleString() + ' events · by weekday',
+      d.dow_hour[k], d.dow_labels);
+  }
+  const vch = Object.keys(d.voice || {}).sort();
+  if(vch.length){
+    html += '<div class="sechead">Voice by channel</div>';
+    const rows = vch.map(c => d.voice[c].hours);
+    html += heatBlock('Voice channels',
+      vch.map(c => c + ' (' + d.voice[c].n + ')').join('  ·  '), rows, vch);
+  }
+  html += '<p class="note">' + esc(d.caveat) + '</p>';
+  if(d.busiest_hour != null){
+    html += '<p class="note">Busiest hour ' + d.busiest_hour + ':00, quietest '
+         + d.quietest_hour + ':00, local time.</p>';
+  }
+  body.innerHTML = html;
+}
+
+document.querySelectorAll('#patpanel .chip[data-pd]').forEach(b => {
+  b.addEventListener('click', () => {
+    document.querySelectorAll('#patpanel .chip[data-pd]')
+      .forEach(x => x.setAttribute('aria-pressed','false'));
+    b.setAttribute('aria-pressed','true');
+    patDays = Number(b.dataset.pd); loadPatterns();
+  });
+});
+
+/* ========================== T11 · entity ========================== */
+async function openEntity(key){
+  const dr = document.getElementById('drawer');
+  const body = document.getElementById('drawerbody');
+  dr.hidden = false;
+  body.innerHTML = '<div class="empty">loading…</div>';
+  let d;
+  try{
+    const r = await fetch('/api/entity?key=' + encodeURIComponent(key));
+    d = await r.json();
+  }catch(e){ body.innerHTML = '<div class="empty">Could not load.</div>'; return; }
+  if(d.error){
+    body.innerHTML = '<h2>' + esc(key) + '</h2><div class="empty">'
+      + esc(d.error) + '</div>'; return;
+  }
+  const a = d.aircraft || null;
+  let html = '<h2>' + esc(d.label || d.device_key) + '</h2>'
+    + '<div class="sub2">' + esc(d.device_key) + ' · ' + esc(LABEL[d.kind] || d.kind)
+    + '</div><dl class="kv">'
+    + '<dt>first seen</dt><dd>' + esc(d.first_seen || '—') + '</dd>'
+    + '<dt>last seen</dt><dd>' + esc(d.last_seen || '—') + '</dd>'
+    + '<dt>times seen</dt><dd>' + (d.seen_count||0).toLocaleString() + '</dd>'
+    + '<dt>events kept</dt><dd>' + (d.event_total||0).toLocaleString() + '</dd>';
+  if(a && a.positions){
+    html += '<dt>positions</dt><dd>' + a.positions.toLocaleString() + '</dd>'
+      + '<dt>altitude</dt><dd>' + (a.alt_min||0).toLocaleString() + '–'
+      + (a.alt_max||0).toLocaleString() + ' ft</dd>'
+      + '<dt>max speed</dt><dd>' + (a.speed_max||0) + ' kt</dd>';
+    if(a.callsigns && a.callsigns.length)
+      html += '<dt>callsigns</dt><dd>' + esc(a.callsigns.join(', ')) + '</dd>';
+    if(a.squawks && a.squawks.length)
+      html += '<dt>squawks</dt><dd>' + esc(a.squawks.join(', ')) + '</dd>';
+  }
+  html += '</dl>';
+
+  const hrs = d.hours_local || [];
+  if(hrs.some(x=>x)){
+    const mx = Math.max(...hrs);
+    html += '<div class="sechead">Activity by hour · ' + esc(d.tz||'local') + '</div>'
+      + '<div class="spark">' + hrs.map((v,i) =>
+          '<i title="' + i + ':00 — ' + v + '" style="height:'
+          + Math.max(1, Math.round(v/mx*100)) + '%"></i>').join('') + '</div>';
+  }
+  if(d.alerts && d.alerts.length){
+    html += '<div class="sechead">Alerts</div>' + d.alerts.map(x =>
+      '<div class="evrow"><time>' + clock(x.ts) + '</time><span>'
+      + esc(x.rule) + ' — ' + esc(x.message) + '</span></div>').join('');
+  }
+  if(d.readings && d.readings.length){
+    html += '<div class="sechead">Recent decodes</div>' + d.readings.slice(0,25).map(x => {
+      const extra = Object.keys(x).filter(k => !['ts','summary'].includes(k))
+        .map(k => k + '=' + x[k]).join('  ');
+      return '<div class="evrow"><time>' + clock(x.ts) + '</time><span>'
+        + esc(x.summary || '') + (extra ? ' <span class="mono" style="color:var(--faint)">'
+        + esc(extra) + '</span>' : '') + '</span></div>';
+    }).join('');
+  }
+  if(d.voice && d.voice.length){
+    html += '<div class="sechead">Transmissions</div>' + d.voice.slice(0,25).map(x =>
+      '<div class="evrow"><time>' + clock(x.ts) + '</time><span>'
+      + esc(x.transcript || (x.rejected_because ? '(rejected: ' + x.rejected_because + ')'
+                                                : '(not transcribed)'))
+      + '</span></div>').join('');
+  }
+  if(d.datalink && d.datalink.length){
+    html += '<div class="sechead">Datalink messages</div>' + d.datalink.map(m =>
+      '<div class="dlink"><time>' + clock(m.ts) + '</time>'
+      + '<span class="src' + (m.rebroadcast ? ' rb' : '') + '">'
+      + esc(m.source) + '</span><span>' + esc(m.summary || '') + '</span></div>').join('');
+  }
+  if(d.events && d.events.length){
+    /* ADS-B emits several messages a second, so a raw list is 40 copies of one
+       line. Collapse consecutive identical summaries and show the repeat count
+       -- the information is the run, not each member of it. */
+    /* consecutive-run collapsing is not enough: ADS-B interleaves altitude,
+       speed and bare-ident messages, so identical lines are never adjacent.
+       Group by the summary text itself over the window instead. */
+    const seen = new Map();
+    for(const x of d.events){
+      const k = x.summary || '';
+      if(seen.has(k)){ const e = seen.get(k); e.n++; e.ts = x.ts > e.ts ? x.ts : e.ts;
+                       e.until = x.ts < e.until ? x.ts : e.until; }
+      else seen.set(k, {summary: k, ts: x.ts, until: x.ts, n: 1});
+    }
+    const runs = [...seen.values()].sort((p,q) => q.ts.localeCompare(p.ts));
+    html += '<div class="sechead">Events</div>' + runs.slice(0,40).map(r =>
+      '<div class="evrow"><time>' + clock(r.ts) + '</time><span>'
+      + esc(r.summary)
+      + (r.n > 1 ? ' <span class="mono" style="color:var(--faint)">x' + r.n
+          + ' since ' + clock(r.until) + '</span>' : '')
+      + '</span></div>').join('');
+    if(d.event_total > d.events.length)
+      html += '<p class="note">' + runs.length + ' distinct messages across the '
+           + 'most recent ' + d.events.length + ' of '
+           + d.event_total.toLocaleString() + ' retained events</p>';
+  }
+  body.innerHTML = html;
+}
+document.getElementById('drawerclose').addEventListener('click',
+  () => { document.getElementById('drawer').hidden = true; });
+document.getElementById('drawer').addEventListener('click', ev => {
+  if(ev.target.id === 'drawer') ev.currentTarget.hidden = true;
+});
+document.addEventListener('keydown', ev => {
+  if(ev.key === 'Escape') document.getElementById('drawer').hidden = true;
+});
+
+/* ---- Tune: recently active ---------------------------------------------
+   A directory entry says a frequency exists. Activity says it was BUSY.
+   Those are different claims and the UI keeps them visually distinct. */
+let activeOnly = false, activeHours = 24;
+
+function agoText(ts){
+  const t = new Date(ts);
+  if(isNaN(t)) return '';
+  const m = Math.round((Date.now() - t.getTime()) / 60000);
+  if(m < 1)  return 'just now';
+  if(m < 60) return m + 'm ago';
+  const h = Math.round(m/60);
+  return h < 48 ? h + 'h ago' : Math.round(h/24) + 'd ago';
+}
+function isRecent(a){
+  if(!a || !a.last) return false;
+  return (Date.now() - new Date(a.last).getTime()) < activeHours*3600*1000;
+}
+
+async function reloadStations(){
+  try{
+    stationsCache = await (await fetch('/api/stations?active_h=' + activeHours)).json();
+  }catch(e){ return; }
+  paintStations();
+}
+
+document.addEventListener('click', ev => {
+  const b = ev.target.closest('#actbar .chip');
+  if(!b) return;
+  if(b.dataset.ah){
+    document.querySelectorAll('#actbar .chip[data-ah]')
+      .forEach(x => x.setAttribute('aria-pressed','false'));
+    b.setAttribute('aria-pressed','true');
+    activeHours = Number(b.dataset.ah);
+    reloadStations();
+  } else if(b.id === 'actonly'){
+    activeOnly = !activeOnly;
+    b.setAttribute('aria-pressed', String(activeOnly));
+    paintStations();
+  }
+});
+
+/* ======================= Environment (readings) ======================= */
+let envHours = 24;
+
+const METRIC_FMT = {
+  temperature: v => v.toFixed(1),
+  humidity:    v => Math.round(v),
+  pressure:    v => v.toFixed(2),
+  battery_ok:  v => (v ? 'OK' : 'LOW'),
+};
+
+function fmtMetric(m){
+  const f = METRIC_FMT[m.metric] || (v => v.toFixed(2));
+  const val = f(m.value);
+  if(m.metric === 'battery_ok') return val;
+  return val + (m.unit && m.unit !== 'bool' ? ' ' + m.unit : '');
+}
+
+function sparkline(series){
+  if(!series || series.length < 2) return '';
+  const vals = series.map(p => p[1]);
+  const lo = Math.min(...vals), hi = Math.max(...vals);
+  const span = (hi - lo) || 1;
+  /* a flat trace at a plausible value is what a single number hides */
+  const flat = (hi - lo) < 1e-9;
+  return '<div class="spark2">'
+    + vals.map(v => '<i style="height:' + (6 + ((v - lo) / span) * 94) + '%"></i>').join('')
+    + '</div>'
+    + (flat ? '<div class="flat">flat across the whole window — check the sensor</div>' : '');
+}
+
+async function loadEnvironment(){
+  const grid = document.getElementById('envgrid');
+  const stat = document.getElementById('envstat');
+  stat.textContent = 'loading…';
+  let d;
+  try{
+    d = await (await fetch('/api/environment?hours=' + envHours)).json();
+  }catch(e){
+    grid.innerHTML = '<div class="empty">Could not load sensor readings.</div>';
+    return;
+  }
+  if(d.error){
+    grid.innerHTML = '<div class="empty">' + esc(d.error) + '</div>'; return;
+  }
+  const devs = d.devices || [];
+  const live = devs.filter(x => !x.stale).length;
+  stat.textContent = devs.length + ' sensor' + (devs.length===1?'':'s')
+                   + ' · ' + live + ' reporting';
+  if(!devs.length){
+    grid.innerHTML = '<div class="empty">No sensor readings in the last '
+      + envHours + 'h. rtl_433 lanes have to run for these to arrive.</div>';
+    document.getElementById('envnote').textContent = '';
+    return;
+  }
+
+  grid.innerHTML = devs.map(dev => {
+    const name = dev.label || dev.device_key.split('/')[0];
+    return '<div class="sensor' + (dev.stale ? ' stale' : '') + '">'
+      + '<h4>' + esc(name)
+      + '<span class="owner' + (dev.owner === 'mine' ? ' mine' : '') + '">'
+      + (dev.owner === 'mine' ? 'mine' : 'not mine') + '</span></h4>'
+      + '<div class="key">' + esc(dev.device_key) + '</div>'
+      + dev.metrics.map(m =>
+          '<div class="metric"><div>'
+          + '<div class="n">' + esc(m.metric.replace(/_/g, ' ')) + '</div>'
+          + '<div class="v">' + esc(fmtMetric(m)) + '</div></div>'
+          + '<div class="age' + (m.stale ? ' old' : '') + '">'
+          + esc(agoText(m.ts)) + '</div></div>'
+          + sparkline(m.series)).join('')
+      + '</div>';
+  }).join('');
+
+  document.getElementById('envnote').textContent =
+    (d.note || '') + (d.nominated && d.nominated.length
+      ? '  Nominated as yours: ' + d.nominated.join(', ') + '.'
+      : '  Nothing is nominated yet, so every sensor reads as third-party. '
+        + 'Add device keys to config/sensors.json to claim your own.');
+}
+
+document.querySelectorAll('#envpanel .chip[data-eh]').forEach(b => {
+  b.addEventListener('click', () => {
+    document.querySelectorAll('#envpanel .chip[data-eh]')
+      .forEach(x => x.setAttribute('aria-pressed','false'));
+    b.setAttribute('aria-pressed','true');
+    envHours = Number(b.dataset.eh); loadEnvironment();
+  });
+});
+
+/* ===================== Imagery ===================== */
+async function loadCaptures(){
+  const box = document.getElementById('caps');
+  const stat = document.getElementById('capstat');
+  stat.textContent = 'loading…';
+  let d;
+  try{ d = await (await fetch('/api/captures')).json(); }
+  catch(e){ box.innerHTML = '<div class="empty">Could not load captures.</div>'; return; }
+  const caps = d.captures || [];
+  stat.textContent = caps.length + ' capture' + (caps.length===1?'':'s');
+  if(!caps.length){
+    box.innerHTML = '<div class="empty">No satellite captures yet. '
+      + 'bw-capture-meteor takes the next good pass.</div>';
+    return;
+  }
+  box.innerHTML = caps.map(c =>
+    '<div class="cap"><h4>' + esc(c.id.replace(/_decoded$/, ''))
+    + ' <span class="owner">' + esc(c.kind)
+    + '</span></h4><div class="sub3">' + esc(c.when.replace('T',' ').slice(0,16))
+    + ' UTC · ' + c.count + ' image' + (c.count===1?'':'s') + '</div>'
+    + '<div class="shots">' + c.images.map(i =>
+        '<div class="shot" data-src="/img/' + encodeURI(i.rel) + '">'
+        + '<img loading="lazy" src="/img/' + encodeURI(i.rel) + '?thumb=1" alt="'
+        + esc(i.name) + '"><span>' + esc(i.name) + '</span></div>').join('')
+    + '</div></div>').join('');
+  box.querySelectorAll('.shot').forEach(s => s.addEventListener('click', () => {
+    const lb = document.getElementById('lightbox');
+    lb.querySelector('img').src = s.dataset.src;
+    lb.hidden = false;
+  }));
+}
+
+/* ===================== Lane yield ===================== */
+async function loadLanes(){
+  const box = document.getElementById('lanes');
+  const stat = document.getElementById('lanestat');
+  stat.textContent = 'loading…';
+  let d;
+  try{ d = await (await fetch('/api/lanes')).json(); }
+  catch(e){ box.innerHTML = '<div class="empty">Could not load lane stats.</div>'; return; }
+  if(d.error){ box.innerHTML = '<div class="empty">' + esc(d.error) + '</div>'; return; }
+  const rows = d.lanes || [];
+  stat.textContent = rows.length + ' lanes · ' + Math.round(d.total_minutes)
+                   + ' min of radio measured';
+  const maxRate = Math.max(...rows.map(r => r.per_min), 1);
+  box.innerHTML = '<table><thead><tr><th>lane</th><th>min on air</th>'
+    + '<th>share</th><th>output</th><th>per min</th><th></th></tr></thead><tbody>'
+    + rows.map(r => {
+        /* zero output is only a problem when it is NOT the point of the lane */
+        const cls = r.output === 0
+          ? (r.expected_silent ? 'okquiet' : 'zero') : '';
+        return '<tr><td class="l">' + esc(r.lane)
+          + (r.expected_silent ? ' <span class="pill">quiet by design</span>' : '')
+          + '</td><td>' + r.minutes.toFixed(0) + '</td>'
+          + '<td>' + r.share_pct.toFixed(1) + '%</td>'
+          + '<td class="' + cls + '">' + r.output.toLocaleString() + ' '
+          + esc(r.unit) + '</td>'
+          + '<td class="' + cls + '">' + r.per_min.toFixed(2) + '</td>'
+          + '<td style="width:120px"><div class="bar2" style="width:'
+          + Math.max(2, Math.round(100 * r.per_min / maxRate)) + '%"></div></td></tr>';
+      }).join('') + '</tbody></table>';
+  document.getElementById('lanenote').textContent = d.caveat || '';
+  loadTranscription();
+  loadHealth();
+}
+
+/* ===================== Transcription =====================
+   Three different things look like "no transcript" and need opposite
+   responses: not selected (working as configured), rejected by the quality
+   gate (a SUCCESS -- Whisper was fabricating), and never processed. Showing
+   them as one number is how a working filter and a broken transcriber look
+   identical. */
+async function loadTranscription(){
+  const box = document.getElementById('trx');
+  const stat = document.getElementById('trxstat');
+  if(!box) return;
+  stat.textContent = 'loading…';
+  let d;
+  try{ d = await (await fetch('/api/transcription')).json(); }
+  catch(e){ box.innerHTML = '<div class="empty">Could not load transcription stats.</div>'; return; }
+  if(d.error){ box.innerHTML = '<div class="empty">' + esc(d.error) + '</div>'; return; }
+  const t = d.totals || {};
+  stat.textContent = t.recorded + ' recorded · ' + t.selected_recorded
+    + ' selected · ' + t.transcribed + ' transcribed · ' + t.rejected + ' rejected';
+  const rows = d.channels || [];
+  box.innerHTML = '<table><thead><tr><th>channel</th><th>recorded</th>'
+    + '<th>transcribed</th><th>rejected</th><th></th></tr></thead><tbody>'
+    + rows.map(r =>
+        '<tr><td class="l">' + esc(r.channel)
+        + (r.selected ? '' : ' <span class="pill">not selected</span>')
+        + '</td><td>' + r.recorded + '</td>'
+        + '<td class="' + (r.selected && r.transcribed === 0 ? 'zero' : '') + '">'
+        + r.transcribed + '</td>'
+        + '<td>' + (r.rejected || '') + '</td>'
+        + '<td style="width:120px"><div class="bar2" style="width:'
+        + Math.max(2, Math.round(100 * r.transcribed / Math.max(1, r.recorded)))
+        + '%"></div></td></tr>').join('')
+    + '</tbody></table>'
+    + ((d.reject_reasons || []).length
+        ? '<p class="note" style="margin-top:9px">Quality gate rejected: '
+          + d.reject_reasons.map(x => esc(x.reason) + ' \u00d7' + x.count).join(' · ')
+          + '</p>'
+        : '');
+  document.getElementById('trxnote').textContent =
+    (d.allowlist_active
+      ? 'Transcribing ' + d.allowlist.length + ' selected channels only. '
+      : 'Transcribing every channel. ')
+    + (d.caveat || '');
+}
+
+/* ===================== System health =====================
+   Every tuning decision on this system so far rested on a number someone
+   measured by hand and then lost. This plots the recorded ones so "is it
+   better now?" is a glance instead of another dig. */
+async function loadHealth(){
+  const box = document.getElementById('health');
+  if(!box) return;
+  document.getElementById('hstat').textContent = 'loading…';
+  let d;
+  try{ d = await (await fetch('/api/health')).json(); }
+  catch(e){ box.innerHTML = '<div class="empty">Could not load health data.</div>'; return; }
+  if(d.error){ box.innerHTML = '<div class="empty">' + esc(d.error) + '</div>'; return; }
+  if(!d.runs){ box.innerHTML = '<div class="empty">No health snapshots recorded yet.</div>'; return; }
+  document.getElementById('hstat').textContent =
+    d.runs + ' snapshots over ' + d.hours + 'h';
+
+  const spark = pts => {
+    if(!pts.length) return '';
+    const hi = Math.max(...pts), lo = Math.min(...pts), span = (hi - lo) || 1;
+    /* show at most the last 60 points so the bars stay wide enough to read */
+    return '<div class="hspark">' + pts.slice(-60).map(v =>
+      '<i style="height:' + Math.max(4, Math.round(100 * (v - lo) / span)) + '%"></i>'
+    ).join('') + '</div>';
+  };
+
+  const tiles = (d.trends || []).map(t =>
+    '<div class="htile"><div class="hl">' + esc(t.label) + '</div>'
+    + '<div class="hv">' + t.current.toLocaleString()
+    + (t.unit ? ' <span class="hr">' + esc(t.unit) + '</span>' : '') + '</div>'
+    + '<div class="hr">range ' + t.min.toLocaleString() + ' – ' + t.max.toLocaleString() + '</div>'
+    + spark(t.points)
+    + '<div class="hq">' + esc(t.question) + '</div></div>').join('');
+
+  /* availability, not just "is it up now" -- a crash that healed itself looks
+     identical to perfect uptime if you only ever ask about the present */
+  const procs = (d.processes || []).map(p =>
+    '<div class="prow"><span class="l">' + esc(p.name) + '</span>'
+    + '<span class="' + (p.uptime_pct >= 99 ? '' : (p.uptime_pct >= 90 ? 'warn' : 'zero'))
+    + '">' + p.uptime_pct + '%</span>'
+    + '<span><span class="avail">' + p.points.slice(-80).map(v =>
+        '<i class="' + (v ? '' : 'dn') + '"></i>').join('') + '</span></span></div>').join('');
+
+  box.innerHTML = '<div class="htiles">' + tiles + '</div>'
+    + '<div class="panelhead" style="margin-top:18px"><h2>Availability</h2>'
+    + '<span class="note">fraction of snapshots each process was seen</span></div>'
+    + '<div>' + procs + '</div>';
+  document.getElementById('hnote').textContent = d.caveat || '';
+}
+
+document.getElementById('lightbox').addEventListener('click',
+  e => { e.currentTarget.hidden = true; });
+document.getElementById('tab-img').addEventListener('click', () => setView('img'));
+document.getElementById('tab-lanes').addEventListener('click', () => setView('lanes'));
+/* ================= Vehicles + feed status ================= */
+async function loadVehicles(){
+  const box = document.getElementById('vehicles');
+  const stat = document.getElementById('vehstat');
+  stat.textContent = 'loading…';
+  let d, f;
+  try{
+    d = await (await fetch('/api/vehicles')).json();
+    f = await (await fetch('/api/feeds')).json();
+  }catch(e){ box.innerHTML = '<div class="empty">Could not load.</div>'; return; }
+
+  const vs = (d && d.vehicles) || [];
+  stat.textContent = vs.length + ' vehicle' + (vs.length===1?'':'s') + ' tracked';
+  box.innerHTML = !vs.length
+    ? '<div class="empty">No vehicles configured. Add a group to config/sensors.json.</div>'
+    : vs.map(v => {
+        const cls = v.presence.indexOf('here')===0 ? 'here'
+                  : v.presence==='parked' ? 'parked' : 'away';
+        return '<div class="veh"><h4>' + esc(v.label)
+          + '<span class="presence ' + cls + '">' + esc(v.presence) + '</span></h4>'
+          + '<div class="why">' + esc(v.presence_reason) + '</div>'
+          + '<div class="tyres">' + v.tyres.map(t => {
+              const p = t.pressure == null ? 'no reading' : t.pressure.toFixed(2) + ' PSI';
+              const tc = t.temperature_c == null ? '' : ' · ' + Math.round(t.temperature_c) + '°C';
+              const ag = t.age_min == null ? '' : agoText(t.ts);
+              return '<div class="tyre"><div class="nm">' + esc(t.label) + '</div>'
+                + '<div class="psi">' + esc(p) + '</div>'
+                + '<div class="sub4">' + esc(ag) + esc(tc) + '</div>'
+                + sparkline(t.history) + '</div>';
+            }).join('') + '</div>'
+          + (v.concerns && v.concerns.length
+              ? '<div class="concern">' + v.concerns.map(esc).join(' · ') + '</div>' : '')
+          + (v.note ? '<p class="note">' + esc(v.note) + '</p>' : '')
+          + '</div>';
+      }).join('');
+
+  /* feed status: "configured" and "feeding" are different claims */
+  const fb = document.getElementById('feedbox');
+  if(!f || f.error){ fb.innerHTML = ''; return; }
+  fb.innerHTML = '<div class="sechead">Contributing to</div>'
+    + f.feeds.map(x =>
+        '<div class="feedrow"><span class="fstate ' + esc(x.state.replace(/ /g,'')) + '">'
+        + esc(x.state) + '</span><div><b>' + esc(x.id) + '</b> '
+        + '<span class="note">' + esc(x.why) + '</span><br>'
+        + '<span class="note">' + esc(x.detail) + '</span></div>'
+        + '<span class="note">' + (x.last_connected_min_ago == null ? ''
+            : 'last ' + Math.round(x.last_connected_min_ago) + 'm ago') + '</span></div>'
+      ).join('')
+    + '<p class="note">' + esc(f.note) + '</p>'
+    + '<p class="note">' + esc(f.mlat_note) + '</p>';
+}
+
+document.getElementById('tab-veh').addEventListener('click', () => setView('veh'));
+
+</script>
+</body>
+</html>

@@ -1,0 +1,192 @@
+#!/usr/bin/env python3
+"""When are the weather satellites overhead, and what would catching one cost?
+
+    bw-satpass                      next 24h, passes worth taking
+    bw-satpass --hours 48 --min 30  a longer window, only good passes
+    bw-satpass --refresh            fetch current TLEs first
+    bw-satpass --capture <ISO>      print the capture commands for that pass
+
+137.9 MHz LRPT is the only lane in this system that produces PICTURES rather
+than text or audio. It is also the only one that cannot be rescheduled: a pass
+lasts about fifteen minutes and then the satellite is gone for hours.
+
+MEASURED 2026-09-02, and worth knowing before you plan around this: an 82-degree
+Meteor pass decoded NOTHING from an indoor antenna -- peak SNR 1.6 dB against
+the 6-8 dB LRPT needs, bit error rate 0.41 where 0.5 is pure noise, deframer
+never synced. That was the best pass geometry this site can produce. Until the
+antenna is outdoors, these predictions tell you when a satellite is overhead,
+not when you can receive it.
+
+Two honest limits, stated up front rather than discovered later:
+
+  * Prediction is Keplerian + J2, not SGP4. Fresh TLEs give roughly a minute of
+    error; a TLE over a week old can be several minutes out. Refresh before
+    relying on it, and start early.
+  * Nothing here decodes APT into an image. The capture is a WAV; turning that
+    into a picture needs wxtoimg, noaa-apt or aptdec, none of which are
+    installed. The capture is still worth having -- it can be decoded later,
+    but the pass cannot be re-flown.
+"""
+import argparse
+import json
+import os
+import subprocess
+import sys
+from datetime import datetime, timezone
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
+import bandwatch_config as C  # noqa: E402
+sys.path.insert(0, os.path.join(ROOT, "lanes"))
+# named for what it holds now, not for the satellites it used to track
+TLE_PATH = os.path.join(ROOT, "var", "weather.tle")
+# --- site -------------------------------------------------------------
+# From config, never hardcoded. Satellite geometry is computed FROM this point:
+# a wrong coordinate does not fail, it predicts passes over somewhere else and
+# looks exactly like a correct prediction.
+#
+# Keep it approximate. Three decimal places is a city block and buys no useful
+# accuracy for a pass prediction; your exact address should not appear in
+# source, in a config file you might share, or in any request built from these
+# constants.
+SITE = C.station()
+
+# NOAA 15/18/19 are DELIBERATELY ABSENT. Their APT transmitters were switched
+# off in 2025, so a pass prediction for them is a prediction of silence -- and
+# this list previously contained nothing else, which meant every "excellent"
+# pass it printed was unreceivable. Do not add them back to make the list look
+# fuller; an empty list is the correct answer when nothing is overhead.
+CATNR = {"METEOR-M2 3": 57166, "METEOR-M2 4": 59051}
+# Both active Meteor-M satellites transmit LRPT on 137.9 MHz.
+FREQS = {"METEOR-M2 3": 137.9000, "METEOR-M2 4": 137.9000}
+
+
+def refresh_tles():
+    out = []
+    for name, cat in CATNR.items():
+        try:
+            r = subprocess.run(
+                ["curl", "-s", "--max-time", "20",
+                 "https://celestrak.org/NORAD/elements/gp.php"
+                 "?CATNR=%d&FORMAT=tle" % cat],
+                capture_output=True, text=True, timeout=30)
+            txt = (r.stdout or "").strip()
+            # Validate the SHAPE, not the name. This used to require the text
+            # to start with "NOAA", which would have thrown away every Meteor
+            # TLE and emptied the list while looking like a network problem.
+            body = txt.split("\n")
+            ok = (len(body) >= 3 and body[-2].lstrip().startswith("1 ")
+                  and body[-1].lstrip().startswith("2 "))
+            if ok:
+                out.append(txt)
+            else:
+                print("  %s: unexpected reply, keeping any existing TLE (%.60s)"
+                      % (name, txt.replace("\n", " ")), file=sys.stderr)
+        except Exception as e:
+            print("  %s: fetch failed: %s" % (name, e), file=sys.stderr)
+    if not out:
+        return False
+    os.makedirs(os.path.dirname(TLE_PATH), exist_ok=True)
+    with open(TLE_PATH, "w") as fh:
+        fh.write("\n".join(out) + "\n")
+    return True
+
+
+def load_tles():
+    if not os.path.exists(TLE_PATH):
+        return []
+    lines = [l.rstrip("\n") for l in open(TLE_PATH) if l.strip()]
+    out = []
+    for i in range(0, len(lines) - 2, 3):
+        out.append((lines[i].strip(), lines[i + 1], lines[i + 2]))
+    return out
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--hours", type=float, default=24)
+    ap.add_argument("--min", type=float, default=20.0, dest="min_el",
+                    help="minimum peak elevation; below ~20 the image is mostly noise")
+    ap.add_argument("--refresh", action="store_true", help="fetch current TLEs")
+    ap.add_argument("--capture", help="print capture commands for the pass "
+                                      "starting at this ISO time")
+    ap.add_argument("--json", action="store_true")
+    a = ap.parse_args()
+
+    if a.refresh or not os.path.exists(TLE_PATH):
+        print("fetching TLEs...", file=sys.stderr)
+        if not refresh_tles() and not os.path.exists(TLE_PATH):
+            print("could not fetch TLEs and none are cached", file=sys.stderr)
+            return 2
+
+    sats = load_tles()
+    if not sats:
+        print("no TLEs in %s -- run with --refresh" % TLE_PATH, file=sys.stderr)
+        return 2
+
+    import passes as P
+    import weathersat as W
+    now = datetime.now(timezone.utc)
+    found = []
+    for name, l1, l2 in sats:
+        for p in P.next_passes(l1, l2, SITE[0], SITE[1], SITE[2],
+                               start=now, hours=a.hours,
+                               min_elevation_deg=a.min_el, name=name):
+            p["freq_mhz"] = FREQS.get(name)
+            q, why = W.pass_quality(p["max_elevation_deg"])
+            p["quality"], p["quality_reason"] = q, why
+            found.append(p)
+    found.sort(key=lambda p: p["start"])
+
+    if a.capture:
+        match = [p for p in found if p["start"].startswith(a.capture[:16])]
+        if not match:
+            print("no pass starting at %s in the next %g hours"
+                  % (a.capture, a.hours), file=sys.stderr)
+            return 1
+        p = match[0]
+        start, end, secs = P.pass_window(p, margin_s=60)
+        cfg = W.apt_lane_config(p["freq_mhz"], secs,
+                                os.path.join(ROOT, "var", "apt"))
+        print("# %s  %s -> %s  max %.1f deg (%s)"
+              % (p["satellite"], p["start"][11:16], p["end"][11:16],
+                 p["max_elevation_deg"], p["quality"]))
+        print("# capture window includes a 60s margin at each end")
+        print("# NOTE: this WAV still needs an APT decoder (wxtoimg / noaa-apt /")
+        print("#       aptdec) to become an image. None is installed here.")
+        print(" ".join(cfg["rtl_fm"]), "|", " ".join(cfg["resample"]))
+        print("# output:", cfg["output_path"])
+        return 0
+
+    if a.json:
+        print(json.dumps({"generated_at": now.isoformat(timespec="seconds"),
+                          "site": {"lat": SITE[0], "lon": SITE[1], "alt_m": SITE[2]},
+                          "passes": found}, indent=2))
+        return 0
+
+    if not found:
+        print("no passes above %.0f deg in the next %g hours"
+              % (a.min_el, a.hours))
+        return 0
+    print("%d pass(es) above %.0f deg in the next %g hours   (site %.1f, %.1f)"
+          % (len(found), a.min_el, a.hours, SITE[0], SITE[1]))
+    age = found[0].get("tle_age_days")
+    if age is not None:
+        print("TLE age %.1f days. %s" % (age, "Fresh." if age < 3 else
+              "STALE -- run --refresh; errors grow to minutes past a week."))
+    print()
+    for p in found:
+        print("  %-8s %s -> %s  %4.1f min  max %4.1f deg  %-9s az %3d->%3d  %.4f MHz"
+              % (p["satellite"], p["start"][5:16].replace("T", " "),
+                 p["end"][11:16], p["duration_s"] / 60.0,
+                 p["max_elevation_deg"], p["quality"],
+                 p["azimuth_rise"], p["azimuth_set"], p["freq_mhz"] or 0))
+    print()
+    print("Catching one costs a radio for ~17 minutes. `--capture <start>` "
+          "prints the commands.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,90 @@
+#!/usr/bin/env python3
+"""Export a filtered view of the archive, with provenance. (T14)
+
+    bw-export bundle [--since ISO] [--until ISO] [--out DIR] [--json]
+    bw-export events  [--kind adsb] [--since ISO] [--out FILE]
+    bw-export voice   [--since ISO] [--out FILE]
+    bw-export coverage [--since ISO] [--out FILE]
+    bw-export incidents [--gap 240] [--min 3]
+
+`bundle` is the one to use when handing material to anyone else: it writes
+every table plus a manifest.json carrying row counts, the requested AND the
+observed time range, a sha256 of each file, and an explicit limitations block.
+
+That block is not boilerplate. It states that a transcript is a lead and not a
+fact, that coverage is sampled rather than continuous because the lanes rotate,
+that voice.freq_mhz is reconstructed from the channel label rather than measured
+at capture, and which model produced each transcript. Handing someone the data
+without those caveats would be handing them a false impression of certainty.
+"""
+import argparse
+import os
+import sqlite3
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(ROOT, "analysis"))
+DB = os.path.join(ROOT, "var", "events.db")
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("what", choices=["bundle", "events", "voice", "coverage",
+                                     "incidents"])
+    ap.add_argument("--since")
+    ap.add_argument("--until")
+    ap.add_argument("--kind")
+    ap.add_argument("--out")
+    ap.add_argument("--json", action="store_true", help="json instead of csv")
+    ap.add_argument("--gap", type=int, default=240)
+    ap.add_argument("--min", type=int, default=3, dest="min_events")
+    a = ap.parse_args()
+
+    if not os.path.exists(DB):
+        print("no database at %s" % DB, file=sys.stderr)
+        return 2
+    con = sqlite3.connect(DB)
+    fmt = "json" if a.json else "csv"
+
+    if a.what == "incidents":
+        import correlate
+        inc = correlate.find_incidents(con, gap_s=a.gap, min_events=a.min_events)
+        inc.sort(key=lambda i: -i["score"])
+        print("%d incidents (gap %ds, min %d events)"
+              % (len(inc), a.gap, a.min_events))
+        for i in inc[:40]:
+            print("  score=%6.1f  %s -> %s  %-18s %d entities, %d events"
+                  % (i["score"], i["start"][11:19], i["end"][11:19],
+                     ",".join(i["kinds"]), len(i["entities"]), len(i["events"])))
+        if len(inc) > 40:
+            print("  ... and %d more" % (len(inc) - 40))
+        return 0
+
+    import export
+    if a.what == "bundle":
+        out = a.out or os.path.join(ROOT, "var", "export")
+        man = export.export_bundle(con, out, since=a.since, until=a.until,
+                                   fmt=fmt)
+        print("wrote bundle to %s" % out)
+        for name, f in sorted((man.get("files") or {}).items()):
+            print("  %-16s %6s rows  sha %s"
+                  % (name, f.get("rows"), (f.get("sha256") or "")[:16]))
+        print("  manifest.json    %d limitation(s) recorded"
+              % len(man.get("limitations", {})))
+        print("\nRead the limitations block before sharing any of this.")
+        return 0
+
+    out = a.out or os.path.join(ROOT, "var", "%s.%s" % (a.what, fmt))
+    fn = {"events": export.export_events, "voice": export.export_voice,
+          "coverage": export.export_coverage}[a.what]
+    kw = {"fmt": fmt, "since": a.since, "until": a.until}
+    if a.what == "events":
+        kw["kind"] = a.kind
+    n = fn(con, out, **kw)
+    print("wrote %d row(s) to %s" % (n, out))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

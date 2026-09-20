@@ -1,0 +1,220 @@
+#!/bin/bash
+# bandwatch -- one switch for the whole SDR pipeline.
+#
+#   bandwatch start [profile]   run broker + collector (default: two-radio)
+#   bandwatch stop              stop everything, release every dongle
+#   bandwatch radios-off        release the dongles, KEEP the web UI up
+#   bandwatch radios-on         resume scanning after radios-off
+#   bandwatch status            per-device lane health with zero-event alarms
+#   bandwatch lanes [profile]   list lanes per device
+#   bandwatch events            what has been heard
+#   bandwatch device            prove the dongles are present and free
+#   bandwatch ui                open the web feed URL
+#   bandwatch profile <name>    switch profile
+#
+# Stopping must ALWAYS release the devices --
+# a held SDR blocks SDR++, SDRTrunk and every other consumer.
+set -uo pipefail
+
+# Root, config and data directories, plus brew on PATH. One resolver, so a
+# lane can never write to a different events directory than the console reads.
+. "$(dirname "${BASH_SOURCE[0]}")/bw-env.sh"
+
+
+
+STATE="$VAR/state.json"
+DEFAULT_PROFILE="watch-day"
+HOLDERS="rtl_433|rtl_power|rtl_fm|rtl_tcp|rtl_airband|dump1090|readsb|acarsdec|direwolf|multimon-ng"
+
+
+die() { echo "bandwatch: $*" >&2; exit 1; }
+broker_pid()    { pgrep -f "[b]roker.py" 2>/dev/null | head -1; }
+webui_pid()     { pgrep -f "webui/[s]erver.py" 2>/dev/null | head -1; }
+collector_pid() { pgrep -f "[c]ollector.py" 2>/dev/null | head -1; }
+
+cmd_device() {
+  echo "=== dongles ==="
+  # capture FIRST then match: piping rtl_test into `grep -q` under pipefail
+  # makes grep close the pipe, rtl_test die on SIGPIPE(141), and a working
+  # dongle report as missing.
+  local out; out="$(rtl_test -t </dev/null 2>&1)"
+  if printf '%s' "$out" | grep -q "Found .* device"; then
+    printf '%s\n' "$out" | sed -n '1,4p'
+  else
+    echo "  NOT FOUND or busy"
+    printf '%s\n' "$out" | head -3 | sed 's/^/    /'
+  fi
+  echo "=== locks ==="
+  local any=0
+  for f in /tmp/sdr_tuner_*.lock; do
+    [ -e "$f" ] && { echo "  $f (pid $(cat "$f" 2>/dev/null))"; any=1; }
+  done
+  [ $any -eq 0 ] && echo "  none -- devices free"
+  echo "=== processes holding a device ==="
+  pgrep -fl "$HOLDERS" 2>/dev/null || echo "  none"
+}
+
+cmd_start() {
+  local profile="${1:-$DEFAULT_PROFILE}"
+  [ -f "$ROOT/profiles/$profile.json" ] || die "no such profile: $profile"
+  [ -n "$(broker_pid)" ] && { echo "already running (pid $(broker_pid)); stop first"; return 1; }
+  local squatters; squatters=$(pgrep -f "$HOLDERS" 2>/dev/null)
+  if [ -n "$squatters" ]; then
+    echo "refusing to start -- these already hold a dongle:"
+    pgrep -fl "$HOLDERS"
+    return 1
+  fi
+  mkdir -p "$VAR/logs" "$VAR/events"
+  # starting again cancels a deliberate stop, so the supervisor resumes
+  # guarding the stack against real crashes
+  rm -f "$VAR/stopped"
+  # NOT nohup: BSD nohup refuses to run without a controlling terminal,
+  # which a LaunchDaemon does not have. `trap '' HUP` in a subshell gives
+  # the same SIGHUP immunity and works in both contexts.
+  ( trap '' HUP; exec python3 "$ROOT/broker/broker.py" "$profile" \
+      >> "$VAR/logs/broker.out" 2>&1 < /dev/null ) &
+  sleep 3
+  local p; p=$(broker_pid)
+  if [ -z "$p" ]; then
+    echo "FAILED to start; last log:"; tail -15 "$VAR/logs/broker.out"; return 1
+  fi
+  echo "started broker pid $p  profile=$profile"
+  if [ -z "$(collector_pid)" ]; then
+    ( trap '' HUP; exec python3 "$ROOT/broker/collector.py" \
+        >> "$VAR/logs/collector.out" 2>&1 < /dev/null ) &
+    sleep 2
+    echo "started collector pid $(collector_pid)"
+  fi
+  if [ -z "$(webui_pid)" ]; then
+    ( trap '' HUP; exec python3 "$ROOT/webui/server.py" \
+        >> "$VAR/logs/webui.log" 2>&1 < /dev/null ) &
+    sleep 2
+    echo "started webui pid $(webui_pid)  http://$(ipconfig getifaddr en0 2>/dev/null || echo 127.0.0.1):9111"
+  fi
+}
+
+cmd_radios_off() {
+  # Release the dongles WITHOUT taking down the console. The Scanning switch
+  # exists to hand the radios to SDR++ or SDRTrunk; stopping the web UI as
+  # well removed the only way to switch scanning back on.
+  mkdir -p "$VAR"
+  printf 'broker %s bandwatch radios-off\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$VAR/stopped"
+  local p; p=$(broker_pid)
+  if [ -n "$p" ]; then
+    echo "stopping broker pid $p (webui and collector stay up)"
+    kill "$p" 2>/dev/null
+    for _ in $(seq 1 20); do [ -z "$(broker_pid)" ] && break; sleep 1; done
+    [ -n "$(broker_pid)" ] && { echo "  forcing"; kill -9 "$(broker_pid)" 2>/dev/null; }
+  else
+    echo "broker not running"
+  fi
+  for d in 0 1; do
+    f="/tmp/sdr_pause_dev$d"
+    [ -f "$f" ] && { owner=$(cat "$f" 2>/dev/null); kill -0 "$owner" 2>/dev/null || rm -f "$f"; }
+  done
+  echo "radios released"
+}
+
+cmd_radios_on() {
+  rm -f "$VAR/stopped"
+  cmd_start "$@"
+}
+
+cmd_stop() {
+  # Tell the supervisor this was DELIBERATE. Without this it sees the broker
+  # missing within 30s and restarts the whole stack, so "Scanning off" never
+  # lasted long enough to free a dongle for SDR++ or SDRTrunk.
+  mkdir -p "$VAR"
+  printf 'all %s bandwatch stop\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$VAR/stopped"
+  local w; w=$(webui_pid)
+  [ -n "$w" ] && { echo "stopping webui pid $w"; kill "$w" 2>/dev/null; }
+  local c; c=$(collector_pid)
+  [ -n "$c" ] && { echo "stopping collector pid $c"; kill "$c" 2>/dev/null; }
+  local p; p=$(broker_pid)
+  if [ -n "$p" ]; then
+    echo "stopping broker pid $p"
+    kill "$p" 2>/dev/null
+    for _ in $(seq 1 20); do [ -z "$(broker_pid)" ] && break; sleep 1; done
+    [ -n "$(broker_pid)" ] && { echo "  forcing"; kill -9 "$(broker_pid)" 2>/dev/null; }
+  else
+    echo "broker not running"
+  fi
+  # Same rule, earlier: if a live process is holding a radio by flag, its
+  # decoder is not an orphan and must not be killed.
+  live_hold=""
+  for f in /tmp/sdr_pause_dev*; do
+    [ -e "$f" ] || continue
+    owner=$(cat "$f" 2>/dev/null)
+    [ -n "$owner" ] && kill -0 "$owner" 2>/dev/null && live_hold="yes"
+  done
+  if [ -z "$live_hold" ] && pgrep -f "$HOLDERS" >/dev/null 2>&1; then
+    echo "  killing orphaned lane processes:"
+    pgrep -fl "$HOLDERS"
+    pkill -f "$HOLDERS" 2>/dev/null; sleep 2
+    pkill -9 -f "$HOLDERS" 2>/dev/null; sleep 1
+  elif [ -n "$live_hold" ]; then
+    echo "  a live process holds a radio by flag -- not killing lane processes"
+  fi
+  # A pause flag or a live tuner left behind idles a whole radio silently --
+  # /tmp/sdr_pause_dev1 once sat for three hours while device 1 did nothing.
+  # A flag whose owning PID is still alive is DELIBERATE, not stale: a
+  # satellite capture holds a radio this way for ~17 minutes, and clearing it
+  # here would also pkill the rtl_fm doing the recording. A pass cannot be
+  # re-flown. Only orphaned flags are removed, which is what the original
+  # protection was for.
+  held=""
+  for f in /tmp/sdr_pause_dev*; do
+    [ -e "$f" ] || continue
+    owner=$(cat "$f" 2>/dev/null)
+    if [ -n "$owner" ] && kill -0 "$owner" 2>/dev/null; then
+      held="$held $f(pid $owner)"
+    else
+      echo "  clearing stale pause flag $f"
+      rm -f "$f"
+    fi
+  done
+  if [ -n "$held" ]; then
+    echo "  LEAVING pause flag(s) held by a live process:$held"
+    echo "  not killing tuner processes while a capture is in progress"
+    return 0
+  fi
+  pkill -f "ffmpeg .*pipe:0" 2>/dev/null
+  rm -f /tmp/sdr_tuner_*.lock
+  if pgrep -f "$HOLDERS" >/dev/null 2>&1; then
+    echo "  WARNING: a dongle is still held"; return 1
+  fi
+  echo "  all dongles released"
+}
+
+cmd_status() {
+  [ -f "$STATE" ] || { echo "no state file -- never started"; return 1; }
+  local c; c=$(collector_pid)
+  echo "collector : $([ -n "$c" ] && echo "RUNNING pid $c" || echo stopped)"
+  local ne; ne=$(python3 -c "import json;print(json.load(open('$ROOT/collector.json'))['notify_enabled'])" 2>/dev/null)
+  echo "notify    : $([ "$ne" = "True" ] && echo "LIVE -> Signal" || echo "DRY-RUN (nothing sent)")"
+  local w; w=$(webui_pid)
+  echo "webui     : $([ -n "$w" ] && echo "RUNNING pid $w -> :9111" || echo stopped)"
+  python3 "$ROOT/broker/status.py" "$STATE" "$ROOT"
+}
+
+cmd_lanes() {
+  local profile="${1:-$DEFAULT_PROFILE}"
+  python3 "$ROOT/broker/status.py" --lanes "$ROOT/profiles/$profile.json"
+}
+
+cmd_events() { python3 "$ROOT/broker/status.py" --events "$VAR/events.db"; }
+
+case "${1:-status}" in
+  start)   shift; cmd_start "$@" ;;
+  stop)    cmd_stop ;;
+  radios-off) cmd_radios_off ;;
+  radios-on)  shift; cmd_radios_on "$@" ;;
+  restart) cmd_stop; sleep 2; shift; cmd_start "$@" ;;
+  status)  cmd_status ;;
+  lanes)   shift; cmd_lanes "$@" ;;
+  events)  cmd_events ;;
+  device)  cmd_device ;;
+  ui)      echo "http://$(ipconfig getifaddr en0 2>/dev/null || echo 127.0.0.1):9111" ;;
+  profile) shift; [ -n "${1:-}" ] || die "profile needs a name"; cmd_stop; sleep 2; cmd_start "$1" ;;
+  *) sed -n '2,14p' "$0" ;;
+esac

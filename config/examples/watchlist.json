@@ -1,0 +1,13 @@
+{
+  "_note": "Terms that escalate a clip to transcription and, if you have enabled alerting, raise an alert. Keep it SHORT. Every term here is a standing instruction to spend GPU time and your attention.",
+
+  "_the_one_rule_that_matters": "These terms are NEVER fed to Whisper as an initial_prompt. Priming the model with a term makes it emit that term -- the hit would be manufactured by the prompt rather than heard on the air. bandwatch keeps the watchlist strictly on the OUTPUT side of transcription, and any change that passes it in as context is a bug, not an optimisation.",
+
+  "_and_the_second_one": "A transcript is a LEAD, never a fact. A watchlist hit means a noisy statistical model produced matching characters; it does not mean anyone said it. Listen to the clip. See docs/COVERAGE.md.",
+
+  "terms": [],
+
+  "_example": {
+    "terms": ["mile marker", "structure fire", "cedar hollow"]
+  }
+}

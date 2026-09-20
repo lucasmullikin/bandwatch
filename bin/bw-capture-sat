@@ -1,0 +1,433 @@
+#!/usr/bin/env python3
+"""Capture a NOAA weather satellite pass and decode it to an image.
+
+    bw-capture-sat --list                 what is coming, and how good
+    bw-capture-sat --next                 wait for the best upcoming pass and take it
+    bw-capture-sat --at 2026-09-01T18:59  take that specific pass
+    bw-capture-sat --decode FILE.wav      re-decode a capture you already have
+
+The whole chain: borrow the radio, record the pass as an 11 kHz WAV, hand it to
+satdump's noaa_apt pipeline, write the images.
+
+Three things this is careful about, because each has already cost this project
+something:
+
+  * A pass cannot be rescheduled. It lasts about fifteen minutes and then the
+    satellite is gone for hours. So the radio is grabbed with a margin at both
+    ends, and the WAV is kept even if decoding fails -- a WAV can be decoded
+    again tomorrow, a pass cannot be re-flown.
+
+  * The radio is chosen by which one has the RIGHT ANTENNA, resolved live from
+    the broker's state rather than assumed. USB enumeration order changed
+    across a reboot on 2026-09-01 and the physical indices swapped; anything
+    that hardcoded "device 0" would have recorded on the wrong antenna and
+    produced noise that looks like a bad pass.
+
+  * The pause flag is always cleared, on every exit path including a crash or
+    Ctrl-C. One left behind idled a radio for three hours while every status
+    check reported healthy.
+"""
+import argparse
+import json
+import os
+import signal
+import subprocess
+import sys
+import time
+from datetime import datetime, timedelta, timezone
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
+import bandwatch_config as C  # noqa: E402
+sys.path.insert(0, os.path.join(ROOT, "lanes"))
+BIN = os.path.join(os.path.expanduser("~"), "homebrew", "bin")
+STATE = os.path.join(ROOT, "var", "state.json")
+OUTDIR = os.path.join(ROOT, "var", "apt")
+PAUSE_FMT = "/tmp/sdr_pause_dev%s"
+# --- site -------------------------------------------------------------
+# From config, never hardcoded. Satellite geometry is computed FROM this point:
+# a wrong coordinate does not fail, it predicts passes over somewhere else and
+# looks exactly like a correct prediction.
+#
+# Keep it approximate. Three decimal places is a city block and buys no useful
+# accuracy for a pass prediction; your exact address should not appear in
+# source, in a config file you might share, or in any request built from these
+# constants.
+SITE = C.station()
+TLE_PATH = os.path.join(ROOT, "var", "noaa.tle")
+
+FREQS = {"NOAA 15": 137.6200, "NOAA 18": 137.9125, "NOAA 19": 137.1000}
+SATNUM = {"NOAA 15": 15, "NOAA 18": 18, "NOAA 19": 19}
+# APT is ~34 kHz wide; 60 kHz leaves room for Doppler (+/-3 kHz here) and for
+# the FM discriminator to stay linear.
+CAPTURE_RATE = 60000
+APT_RATE = 11025
+MARGIN_S = 60
+
+_paused = []
+
+
+def log(m):
+    print("%s  %s" % (datetime.now(timezone.utc).strftime("%H:%M:%S"), m),
+          flush=True)
+
+
+def cleanup(*_a):
+    for d in list(_paused):
+        try:
+            os.unlink(PAUSE_FMT % d)
+            log("released radio %s" % d)
+        except OSError:
+            pass
+        _paused.remove(d)
+
+
+def low_band_device():
+    """Which PHYSICAL radio carries the antenna cut for 137 MHz.
+
+    137 MHz lives in the low-band device's range, and the broker records which
+    physical index it resolved that to. Read it rather than assume: the indices
+    swapped across a reboot once already.
+    """
+    try:
+        st = json.load(open(STATE))
+    except Exception:
+        return "0", "state.json unreadable -- falling back to physical 0"
+    for key, dev in (st.get("devices") or {}).items():
+        label = (dev.get("label") or "").upper()
+        if "LOW BAND" in label:
+            phys = str(dev.get("physical_index", key))
+            return phys, "dev%s (%s) -> physical %s" % (key, label[:28], phys)
+    return "0", "no LOW BAND device in the profile -- falling back to physical 0"
+
+
+def load_passes(hours, min_el):
+    import passes as P
+    if not os.path.exists(TLE_PATH):
+        log("no TLEs cached; fetching")
+        subprocess.run([os.path.join(ROOT, "bin", "bw-satpass"), "--refresh",
+                        "--hours", "1"], capture_output=True, timeout=120)
+    if not os.path.exists(TLE_PATH):
+        return []
+    lines = [l.rstrip("\n") for l in open(TLE_PATH) if l.strip()]
+    out = []
+    now = datetime.now(timezone.utc)
+    for i in range(0, len(lines) - 2, 3):
+        name = lines[i].strip()
+        for p in P.next_passes(lines[i + 1], lines[i + 2], SITE[0], SITE[1],
+                               SITE[2], start=now, hours=hours,
+                               min_elevation_deg=min_el, name=name):
+            p["freq_mhz"] = FREQS.get(name)
+            out.append(p)
+    out.sort(key=lambda p: p["start"])
+    return out
+
+
+def wait_for_release(phys, timeout=90):
+    """Poll the broker's own state until the radio is genuinely free.
+
+    Keyed on PHYSICAL index, because that is what identifies the radio the
+    recording will open. A command line looking free is not evidence:
+    rtl_airband takes its device index from its config file, so scanning argv
+    reports a held radio as available.
+    """
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            st = json.load(open(STATE))
+            for dev in (st.get("devices") or {}).values():
+                if str(dev.get("physical_index")) != str(phys):
+                    continue
+                if dev.get("paused") and not dev.get("current_lane"):
+                    return True
+        except Exception:
+            pass
+        time.sleep(0.5)
+    return False
+
+
+def record(freq_mhz, seconds, dev, out_wav):
+    """rtl_fm -> ffmpeg -> 11 kHz WAV. Returns True if a plausible file exists."""
+    os.makedirs(os.path.dirname(out_wav), exist_ok=True)
+    rtl = [os.path.join(BIN, "rtl_fm"), "-d", str(dev),
+           "-f", "%.4fM" % freq_mhz, "-M", "fm",
+           "-s", str(CAPTURE_RATE), "-g", "48", "-p", "0", "-F", "9",
+           "-E", "dc", "-"]
+    ff = [os.path.join(BIN, "ffmpeg"), "-loglevel", "error", "-y",
+          "-f", "s16le", "-ar", str(CAPTURE_RATE), "-ac", "1", "-i", "pipe:0",
+          "-ar", str(APT_RATE), "-ac", "1", "-c:a", "pcm_s16le", out_wav]
+    log("recording %.4f MHz on radio %s for %ds" % (freq_mhz, dev, seconds))
+    r = subprocess.Popen(rtl, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    f = subprocess.Popen(ff, stdin=r.stdout, stderr=subprocess.DEVNULL)
+    r.stdout.close()
+    try:
+        time.sleep(seconds)
+    finally:
+        for p in (r, f):
+            try:
+                p.terminate()
+            except Exception:
+                pass
+        for p in (r, f):
+            try:
+                p.wait(timeout=10)
+            except Exception:
+                try:
+                    p.kill()
+                except Exception:
+                    pass
+    ok = os.path.exists(out_wav) and os.path.getsize(out_wav) > 100000
+    log("wrote %s (%.1f MB)" % (out_wav,
+        os.path.getsize(out_wav) / 1e6) if ok else "recording produced nothing usable")
+    return ok
+
+
+def _rpc(payload, timeout=120):
+    import urllib.request
+    cfg = json.load(open(os.path.join(ROOT, "collector.json")))
+    req = urllib.request.Request(
+        cfg["signal_rpc"], data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.loads(r.read() or b"{}")
+
+
+def send_to_signal(images, pass_info, wav):
+    """Deliver the best image, with the caption a reader actually needs."""
+    import base64
+    cfg = json.load(open(os.path.join(ROOT, "collector.json")))
+    if not cfg.get("notify_enabled"):
+        log("notify disabled; not sending")
+        return False
+    to = cfg.get("signal_recipient")
+
+    # BOTH channels. Which one is useful depends on the pass: on a night
+    # pass channel A (near-IR) is nearly dark and B (thermal IR) carries the
+    # cloud structure; in daylight A is the visible image. Choosing one for
+    # the operator discards half the pass and guesses wrong half the time.
+    def _pick(letter):
+        corrected = [i for i in images
+                     if ("channel_%s_corrected" % letter) in os.path.basename(i)]
+        if corrected:
+            return corrected[0]
+        raw = [i for i in images
+               if os.path.basename(i) in ("APT-%s.png" % letter,)]
+        if raw:
+            return raw[0]
+        any_ch = [i for i in images
+                  if ("channel_%s" % letter) in os.path.basename(i)]
+        return any_ch[0] if any_ch else None
+
+    picks = [x for x in (_pick("A"), _pick("B")) if x]
+    if not picks and images:
+        picks = images[:1]
+    pick = picks[0] if picks else None
+
+    text = ("NOAA %s weather satellite pass\n%s -> %s UTC\nmax elevation "
+            "%.1f deg (%s)\n%.4f MHz, captured and decoded on the Mini."
+            % (pass_info["satellite"].replace("NOAA ", ""),
+               pass_info["start"][11:16], pass_info["end"][11:16],
+               pass_info["max_elevation_deg"],
+               pass_info.get("quality", "?"), pass_info["freq_mhz"]))
+    if not pick:
+        text += "\n\nNo image decoded. The WAV is kept at %s." % wav
+
+    base = {"jsonrpc": "2.0", "method": "send",
+            "params": {"recipient": [to], "message": text}, "id": "sat"}
+
+    if picks:
+        text += "\n\nChannel A (near-IR) and B (thermal IR)."
+        base["params"]["message"] = text
+        try:
+            atts = []
+            for f in picks:
+                with open(f, "rb") as fh:
+                    atts.append("data:image/png;base64,"
+                                + base64.b64encode(fh.read()).decode())
+            p1 = json.loads(json.dumps(base))
+            p1["params"]["attachments"] = atts
+            r = _rpc(p1)
+            if "error" not in r:
+                log("sent to Signal with %d image(s) inline: %s"
+                    % (len(picks), ", ".join(os.path.basename(f) for f in picks)))
+                return True
+            log("inline attachment refused: %s" % str(r.get("error"))[:120])
+        except Exception as e:
+            log("inline attachment failed: %s" % e)
+
+        try:
+            import subprocess as sp
+            inpaths = []
+            for f in picks:
+                ip = "/var/lib/signal-cli/%s" % os.path.basename(f)
+                sp.run(["docker", "cp", f, "signal:%s" % ip],
+                       capture_output=True, timeout=60, check=True)
+                inpaths.append(ip)
+            p2 = json.loads(json.dumps(base))
+            p2["params"]["attachments"] = inpaths
+            r = _rpc(p2)
+            if "error" not in r:
+                log("sent to Signal via docker cp (%d image(s))" % len(inpaths))
+                return True
+            log("docker-cp attachment refused: %s" % str(r.get("error"))[:120])
+        except Exception as e:
+            log("docker cp route failed: %s" % e)
+
+        base["params"]["message"] = text + (
+            "\n\n%d image(s) decoded but could not be attached. They are at %s"
+            % (len(picks), os.path.dirname(picks[0])))
+    try:
+        r = _rpc(base)
+        log("sent text-only to Signal" if "error" not in r
+            else "Signal send FAILED: %s" % str(r.get("error"))[:150])
+        return "error" not in r
+    except Exception as e:
+        log("Signal send failed entirely: %s" % e)
+        return False
+
+
+def satdump_bin():
+    """The REAL binary inside the app bundle, not the brew symlink.
+
+    satdump locates its config, plugins and pipelines RELATIVE TO ITS OWN
+    PATH. Invoked through an absolute path it looks in
+    /usr/local/share/satdump, finds nothing, and dies with "Couldn't load
+    config file" -- which on a real pass would mean a recorded WAV and no
+    image, discovered only after the satellite had gone.
+    """
+    for c in (os.path.expanduser(
+                  "~/Applications/SatDump.app/Contents/MacOS/satdump"),
+              "/Applications/SatDump.app/Contents/MacOS/satdump",
+              os.path.join(BIN, "satdump")):
+        if os.path.exists(c):
+            return c
+    return "satdump"
+
+
+def decode(wav, sat_name, start_dt):
+    """Hand the WAV to satdump's noaa_apt pipeline."""
+    sat = SATNUM.get(sat_name, 19)
+    outdir = wav.rsplit(".", 1)[0] + "_decoded"
+    os.makedirs(outdir, exist_ok=True)
+    cmd = [satdump_bin(), "noaa_apt", "audio_wav", wav, outdir,
+           "--satellite_number", str(sat),
+           "--start_timestamp", str(int(start_dt.timestamp())),
+           "--autocrop_wedges", "true"]
+    log("decoding: satdump noaa_apt (NOAA-%d)" % sat)
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
+    imgs = []
+    for root, _dirs, files in os.walk(outdir):
+        for f in sorted(files):
+            if f.lower().endswith((".png", ".jpg", ".jpeg")):
+                imgs.append(os.path.join(root, f))
+    if imgs:
+        log("DECODED %d image(s):" % len(imgs))
+        for i in imgs:
+            log("   %s (%.0f KB)" % (i, os.path.getsize(i) / 1024.0))
+    else:
+        log("no image produced. satdump said:")
+        for line in (r.stdout + r.stderr).splitlines()[-12:]:
+            log("   " + line)
+        log("The WAV is kept at %s -- it can be decoded again; the pass cannot "
+            "be re-flown." % wav)
+    return imgs
+
+
+def capture(p, dry=False, send=False):
+    import passes as P
+    start, end, secs = P.pass_window(p, MARGIN_S)
+    dev, why = low_band_device()
+    log("pass %s  %s -> %s  max %.1f deg" % (p["satellite"], p["start"][11:19],
+                                             p["end"][11:19], p["max_elevation_deg"]))
+    log("radio: %s" % why)
+    if dry:
+        log("dry run; not touching the radio")
+        return []
+
+    wait = (start - datetime.now(timezone.utc)).total_seconds()
+    if wait > 0:
+        log("waiting %.0f s for the pass to start (capture includes a %ds "
+            "margin at each end)" % (wait, MARGIN_S))
+        time.sleep(wait)
+
+    open(PAUSE_FMT % dev, "w").write(str(os.getpid()))
+    _paused.append(dev)
+    log("asked the broker for radio %s; waiting for it to CONFIRM release" % dev)
+    if not wait_for_release(dev, timeout=90):
+        log("WARNING: the broker never confirmed releasing radio %s. Recording "
+            "anyway -- a partial capture beats no capture, and the pass cannot "
+            "be re-flown." % dev)
+    else:
+        log("broker confirmed radio %s is free" % dev)
+
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    wav = os.path.join(OUTDIR, "%s_%s.wav"
+                       % (p["satellite"].replace(" ", ""), stamp))
+    ok = record(p["freq_mhz"], secs, dev, wav)
+    cleanup()          # give the radio back BEFORE the slow decode
+    if not ok:
+        return []
+    imgs = decode(wav, p["satellite"], start)
+    if send:
+        send_to_signal(imgs, p, wav)
+    return imgs
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--list", action="store_true")
+    ap.add_argument("--next", action="store_true")
+    ap.add_argument("--at")
+    ap.add_argument("--decode")
+    ap.add_argument("--hours", type=float, default=24)
+    ap.add_argument("--min", type=float, default=30.0, dest="min_el")
+    ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--signal", action="store_true",
+                    help="send the decoded image to Signal when done")
+    a = ap.parse_args()
+
+    signal.signal(signal.SIGINT, lambda *x: (cleanup(), sys.exit(1)))
+    signal.signal(signal.SIGTERM, lambda *x: (cleanup(), sys.exit(1)))
+
+    try:
+        if a.decode:
+            name = "NOAA 19"
+            for n in SATNUM:
+                if n.replace(" ", "") in os.path.basename(a.decode):
+                    name = n
+            return 0 if decode(a.decode, name,
+                               datetime.now(timezone.utc)) else 1
+
+        ps = load_passes(a.hours, a.min_el)
+        if not ps:
+            log("no passes above %.0f deg in the next %g h" % (a.min_el, a.hours))
+            return 0
+
+        if a.list or not (a.next or a.at):
+            dev, why = low_band_device()
+            print("radio that will be used: %s\n" % why)
+            for p in ps:
+                print("  %-8s %s -> %s  max %4.1f deg  %.4f MHz"
+                      % (p["satellite"], p["start"][5:19].replace("T", " "),
+                         p["end"][11:19], p["max_elevation_deg"], p["freq_mhz"]))
+            print("\n--next takes the best of these; --at <ISO> picks one.")
+            return 0
+
+        if a.at:
+            match = [p for p in ps if p["start"].startswith(a.at[:16])]
+            if not match:
+                log("no pass starting at %s" % a.at)
+                return 1
+            target = match[0]
+        else:
+            target = max(ps, key=lambda p: p["max_elevation_deg"])
+
+        imgs = capture(target, dry=a.dry_run, send=a.signal)
+        return 0 if (imgs or a.dry_run) else 1
+    finally:
+        cleanup()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

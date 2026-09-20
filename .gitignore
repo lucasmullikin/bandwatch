@@ -1,0 +1,31 @@
+# Recordings, decoded events, the SQLite store, logs, the worker token.
+# Everything a running station produces. None of it belongs in git, and some of
+# it is other people's radio traffic.
+var/
+
+# YOUR station's configuration: coordinates, band plan, watchlist, claimed
+# sensors, notifier credentials. The worked examples in config/examples/ ARE
+# tracked; anything you copy out of them is not.
+#
+# This is the line that keeps a public checkout publishable. Point
+# BANDWATCH_CONFIG at a directory outside the repo if you would rather not rely
+# on it.
+config/*
+!config/examples/
+!config/README.md
+
+# Generated from config/lanes.json and config/stations.json. Outputs, never
+# sources -- hand-edit one and the next generator run silently reverts you.
+config/conf/
+config/profiles/
+
+# Third-party decoders and datasets: large, re-downloadable, not ours.
+tools/
+models/
+enrich/data/
+
+__pycache__/
+*.pyc
+.venv/
+.venv-test/
+.DS_Store

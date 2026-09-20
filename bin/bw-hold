@@ -1,0 +1,136 @@
+#!/usr/bin/env python3
+"""Pause scheduled scanning and pin one profile, for a bounded time.
+
+  bw-hold status
+  bw-hold hold [profile] [hours]      default: event-track 2
+  bw-hold release
+
+This drives the EXISTING contract rather than inventing a second one:
+schedule_check.py already treats schedule.json's override_until as the sole
+authority and ignores the time rules while it is in the future, and the
+supervisor switches to whatever it prints. So writing the override is all that
+"pause the schedule" needs to mean.
+
+The bound is the point. An override that had to be remembered would eventually
+be forgotten and the stack would stop scanning for days; this one expires on
+its own, exactly like the web UI's event modes.
+"""
+import json
+import os
+import subprocess
+import sys
+from datetime import datetime, timedelta, timezone
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SCHED = os.path.join(
+    os.environ.get("BANDWATCH_CONFIG") or os.path.join(ROOT, "config"),
+    "schedule.json")
+STATE = os.path.join(ROOT, "var", "state.json")
+CTL = os.path.join(ROOT, "bin", "bandwatch")
+MAX_HOURS = 6.0
+
+
+def load():
+    with open(SCHED) as fh:
+        return json.load(fh)
+
+
+def save(cfg):
+    """Write via a temp file: a truncated schedule.json disables the scheduler
+    outright, and the supervisor would then never switch a profile again."""
+    tmp = SCHED + ".tmp"
+    with open(tmp, "w") as fh:
+        json.dump(cfg, fh, indent=2)
+        fh.write("\n")
+    os.replace(tmp, SCHED)
+
+
+def current():
+    try:
+        return json.load(open(STATE)).get("profile")
+    except Exception:
+        return None
+
+
+def explain():
+    out = subprocess.run(["python3", os.path.join(ROOT, "bin", "schedule_check.py"),
+                          "--explain"], capture_output=True, text=True)
+    return out.stdout.strip()
+
+
+def active_override(cfg):
+    ou = cfg.get("override_until")
+    if not ou:
+        return None
+    try:
+        until = datetime.fromisoformat(ou)
+        if until.tzinfo is None:
+            until = until.replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+    if datetime.now(timezone.utc) >= until:
+        return None
+    return until
+
+
+def cmd_status():
+    cfg = load()
+    until = active_override(cfg)
+    print("running profile : %s" % current())
+    print("scheduler       : %s" % explain())
+    if until:
+        left = (until - datetime.now(timezone.utc)).total_seconds() / 60.0
+        print("HOLD ACTIVE     : %s for another %.0f min (until %s)"
+              % (cfg.get("override_profile"), left, until.astimezone().strftime("%H:%M")))
+    else:
+        print("HOLD            : none -- the time rules are in charge")
+
+
+def cmd_hold(profile, hours):
+    if not os.path.exists(os.path.join(ROOT, "profiles", profile + ".json")):
+        sys.exit("bw-hold: no such profile: %s" % profile)
+    if not 0 < hours <= MAX_HOURS:
+        sys.exit("bw-hold: hours must be in (0, %g]" % MAX_HOURS)
+    cfg = load()
+    until = datetime.now(timezone.utc) + timedelta(hours=hours)
+    cfg["override_profile"] = profile
+    cfg["override_until"] = until.isoformat(timespec="seconds")
+    cfg["enabled"] = True          # a disabled scheduler ignores the override too
+    save(cfg)
+    print("hold set: %s until %s (%.1f h)"
+          % (profile, until.astimezone().strftime("%H:%M"), hours))
+    # Switch now rather than waiting up to 30 s for the supervisor's next pass.
+    r = subprocess.run([CTL, "profile", profile], capture_output=True, text=True)
+    sys.stdout.write(r.stdout)
+    if r.returncode != 0:
+        sys.stderr.write(r.stderr)
+        print("WARNING: immediate switch failed; supervisor should still apply it")
+    cmd_status()
+
+
+def cmd_release():
+    cfg = load()
+    cfg.pop("override_profile", None)
+    cfg.pop("override_until", None)
+    save(cfg)
+    print("hold cleared")
+    want = subprocess.run(["python3", os.path.join(ROOT, "bin", "schedule_check.py"),
+                           "--want"], capture_output=True, text=True).stdout.strip()
+    if want:
+        r = subprocess.run([CTL, "profile", want], capture_output=True, text=True)
+        sys.stdout.write(r.stdout)
+    cmd_status()
+
+
+if __name__ == "__main__":
+    args = sys.argv[1:]
+    if not args or args[0] == "status":
+        cmd_status()
+    elif args[0] == "hold":
+        prof = args[1] if len(args) > 1 else "event-track"
+        hrs = float(args[2]) if len(args) > 2 else 2.0
+        cmd_hold(prof, hrs)
+    elif args[0] == "release":
+        cmd_release()
+    else:
+        sys.exit(__doc__)

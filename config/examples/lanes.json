@@ -1,0 +1,173 @@
+{
+  "_note": "The lane catalogue and the rotation profiles, in one file. This is the SOURCE OF TRUTH: config/profiles/*.json are generated from it by make_profiles.py and must never be hand-edited. Every frequency here is a US/international allocation rather than a local one, so this file is usable as-is almost anywhere in the US; what differs by location lives in stations.json.",
+
+  "devices": {
+    "0": {
+      "label": "LOW BAND 118-174 MHz -- set dipole ~50cm, or fit a discone",
+      "serial": "00000001",
+      "_serial_note": "Pin every radio by SERIAL. librtlsdr index order is not stable across a replug, and a swapped index presents as bad reception, never as an error. List yours with 'rtl_test -t'; set them with 'rtl_eeprom -d 0 -s 00000001'. Two dongles reporting the same serial is the default from the factory and must be fixed before anything here is trustworthy."
+    },
+    "1": {
+      "label": "HIGH BAND 225-1090 MHz -- set dipole ~17cm, or fit a discone",
+      "serial": "00000002"
+    }
+  },
+
+  "lanes": {
+    "guard_121": {
+      "kind": "voice", "conf": "guard121.conf", "seconds": 240,
+      "note": "121.500 international aviation DISTRESS. Expected silent; a recording here matters."
+    },
+    "milair_guard": {
+      "kind": "voice", "conf": "guard243.conf", "seconds": 240,
+      "note": "243.000 MILITARY guard/distress. The UHF twin of 121.5."
+    },
+    "air_tower_voice": {
+      "kind": "voice", "conf": "air_tower.conf", "seconds": 600,
+      "note": "Your local tower and approach. Channels within ~1.5 MHz land in one slice and are heard simultaneously."
+    },
+    "air_ground_voice": {
+      "kind": "voice", "conf": "air_ground.conf", "seconds": 300,
+      "note": "Your local ground control. Usually too far from tower to share a slice."
+    },
+    "milair_voice": {
+      "kind": "voice", "conf": "milair.conf", "seconds": 480, "enabled": false,
+      "note": "UHF military air, AM and unencrypted. DISABLED until you seed real frequencies from milair_survey -- the shipped placeholders will hear nothing."
+    },
+    "murs_voice": {
+      "kind": "voice", "conf": "murs.conf", "seconds": 420,
+      "note": "MURS 151.82/151.88/151.94 -- retail and warehouse handhelds, unencrypted NFM. US allocation."
+    },
+    "frs_voice": {
+      "kind": "voice", "conf": "frs.conf", "seconds": 720,
+      "note": "All 15 FRS/GMRS 462 channels at once (175 kHz block). 'Privacy codes' are CTCSS squelch tones, NOT encryption."
+    },
+    "vhf_fire": {
+      "kind": "voice", "conf": "vhf_fire.conf", "seconds": 300, "enabled": false,
+      "note": "VHF fire mutual-aid, where it is still simulcast in the clear. DISABLED by default: on the author's site this produced ZERO audio in 317 runs at both 11 dB and 7 dB squelch, which is a coverage answer, not a bug. Confirm a carrier with a sweep before enabling."
+    },
+
+    "air_survey": {
+      "kind": "sweep", "range": "118M:137M:25k", "seconds": 100, "min_per_hour": 1,
+      "note": "Airband occupancy 118-137. Discovers which channels are live before you record them."
+    },
+    "airband_survey": {
+      "kind": "sweep", "range": "118M:124M:25k", "seconds": 95, "min_per_hour": 1,
+      "note": "Narrower airband sweep for the high-band radio."
+    },
+    "noaa_wx": {
+      "kind": "sweep", "range": "162.35M:162.6M:5k", "seconds": 50, "min_per_hour": 1,
+      "note": "NOAA weather radio 162.4-162.55. KNOWN-GOOD CONTROL: it transmits 24/7, so this lane must ALWAYS show a carrier. If it goes quiet, the radio is broken, not the band."
+    },
+    "survey_fm": {
+      "kind": "sweep", "range": "88M:108M:100k", "seconds": 60, "gain": "30", "min_per_hour": 1,
+      "note": "FM broadcast. KNOWN-GOOD CONTROL for the high-band radio -- carriers must always appear. Every station needs at least one lane whose silence is unambiguous."
+    },
+    "murs_survey": {
+      "kind": "sweep", "range": "151.8M:154.65M:5k", "seconds": 60,
+      "note": "MURS occupancy across both sub-blocks."
+    },
+    "frs_survey": {
+      "kind": "sweep", "range": "462.5M:462.75M:5k", "seconds": 90, "enabled": false,
+      "note": "FRS/GMRS 462 occupancy. Redundant while frs_voice runs; useful to find which channels are worth the dwell."
+    },
+    "milair_survey": {
+      "kind": "sweep", "range": "225M:400M:25k", "seconds": 150,
+      "note": "Military air 225-400 MHz occupancy. 175 MHz of spectrum -- rtl_power hops it. This is how you find real frequencies for milair_voice."
+    },
+    "p25_survey": {
+      "kind": "sweep", "range": "769M:776M:12.5k", "seconds": 70,
+      "note": "700 MHz public-safety occupancy. Finds carriers only. Whether those talkgroups are encrypted is a separate question this project does not attempt to answer, and never attempts to defeat."
+    },
+    "pager_survey": {
+      "kind": "sweep", "range": "929M:932M:12.5k", "seconds": 65,
+      "note": "POCSAG/FLEX paging occupancy."
+    },
+    "lora915": {
+      "kind": "sweep", "range": "902M:928M:12.5k", "seconds": 75,
+      "note": "902-928 ISM occupancy: LoRa, utility telemetry, and everything else sharing the band."
+    },
+
+    "tpms315": {
+      "kind": "rtl433", "freq": "315M", "seconds": 240,
+      "note": "315 MHz TPMS -- tyre pressure sensors on passing vehicles. A TPMS id identifies a TYRE SENSOR, never a person. See docs/COVERAGE.md before doing anything with these."
+    },
+    "ism433": {
+      "kind": "rtl433", "freq": "433.92M", "seconds": 300, "min_per_hour": 1,
+      "note": "433.92 ISM: weather stations, doorbells, remotes, and 315 MHz TPMS's European twin."
+    },
+    "ism915": {
+      "kind": "rtl433", "freq": "915M", "seconds": 180,
+      "note": "915 ISM: utility smart meters (SCM+/ERT)."
+    },
+
+    "adsb": {
+      "kind": "script", "script": "lane-adsb.sh", "event_file": "events/adsb.sbs",
+      "seconds": 300, "min_per_hour": 10,
+      "note": "1090 MHz ADS-B. Squawk 7500/7600/7700 is a STRUCTURED emergency signal -- it beats any transcript, because it cannot be misheard."
+    },
+    "uat978": {
+      "kind": "script", "script": "lane-uat.sh", "event_file": "events/uat978.jsonl",
+      "seconds": 240,
+      "note": "978 MHz UAT -- the US general-aviation half of ADS-B, invisible to a 1090-only receiver."
+    },
+    "pagers": {
+      "kind": "script", "script": "lane-pagers.sh", "args": ["929.6M"],
+      "event_file": "events/pagers.txt", "seconds": 300,
+      "note": "POCSAG/FLEX 929.6 -- dispatch traffic in PLAIN TEXT. No ASR cost, and no transcription error possible."
+    },
+    "aprs": {
+      "kind": "script", "script": "lane-aprs.sh", "args": ["144.390M"],
+      "event_file": "events/aprs.txt", "seconds": 420, "enabled": false,
+      "note": "144.390 ham APRS position/telemetry. DISABLED until direwolf is installed and configured."
+    },
+    "acars": {
+      "kind": "script", "script": "lane-acars.sh", "event_file": "events/acars.jsonl",
+      "seconds": 420, "enabled": false,
+      "note": "131.550 aircraft text. DISABLED until acarsdec is built -- see patches/acarsdec-macos.patch.sh."
+    }
+  },
+
+  "profiles": [
+    {
+      "name": "watch-day",
+      "description": "Daytime default. Weighted to air, emergency, handhelds and military air. Both radios rotate; the two guard channels and the FRS block get the longest dwells.",
+      "devices": {
+        "0": ["guard_121", "air_tower_voice", "air_ground_voice", "air_survey", "murs_voice", "noaa_wx", "vhf_fire", "aprs", "acars"],
+        "1": ["milair_guard", "frs_voice", "milair_voice", "milair_survey", "ism433", "adsb", "uat978", "pagers", "pager_survey", "p25_survey", "survey_fm", "lora915"]
+      }
+    },
+    {
+      "name": "watch-night",
+      "description": "Overnight. Air traffic collapses after ~23:00, so airband shrinks and the radios lean toward handhelds, vehicles and sensors. Both guards stay.",
+      "devices": {
+        "0": ["guard_121", "murs_voice", "air_tower_voice", "noaa_wx", "vhf_fire", "aprs", "acars"],
+        "1": ["milair_guard", "frs_voice", "tpms315", "ism433", "pagers", "pager_survey", "adsb", "uat978", "ism915", "survey_fm", "lora915"]
+      }
+    },
+    {
+      "name": "event-air",
+      "description": "EVENT: aviation. Tower pinned on one radio, military air on the other. Nothing else is heard while this runs -- that is the point, and it is also the cost.",
+      "devices": {
+        "0": ["air_tower_voice"],
+        "1": ["adsb", "milair_survey", "milair_voice"]
+      }
+    },
+    {
+      "name": "event-emergency",
+      "description": "EVENT: emergency watch. Both distress guards plus pager dispatch and the 700 MHz sweep. The narrowest, loudest configuration.",
+      "devices": {
+        "0": ["guard_121", "air_tower_voice"],
+        "1": ["milair_guard", "pagers", "p25_survey"]
+      }
+    },
+    {
+      "name": "event-walkie",
+      "description": "EVENT: handhelds. MURS pinned low, all 15 FRS/GMRS channels pinned high. Maximum handheld capture, zero survey.",
+      "devices": {
+        "0": ["murs_voice"],
+        "1": ["frs_voice"]
+      }
+    }
+  ]
+}

@@ -1,0 +1,42 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    # macOS because bandwatch is macOS-first: launchd, CoreAudio, and a pile of
+    # BSD-vs-GNU shell differences the code deliberately works around. Running
+    # the suite on Linux would prove something about a platform nobody has
+    # tested the radio path on.
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # No pip install step, and that is not an omission: the receiver,
+      # broker, console and analysis are pure standard library. Only the
+      # optional transcription workers need third-party packages, and they are
+      # not exercised here.
+      - name: Show what we are testing with
+        run: |
+          python3 -VV
+          echo "no dependencies to install -- stdlib only"
+
+      - name: Run the suite
+        run: ./run-tests.sh
+
+      # The tests that audit a real event store against real audio skip
+      # without a station. Print the count so a suite that silently stopped
+      # asserting anything is visible rather than green.
+      - name: Report skips
+        if: always()
+        run: |
+          cd analysis && python3 -m unittest discover -p 'test_*.py' 2>&1 | tail -3

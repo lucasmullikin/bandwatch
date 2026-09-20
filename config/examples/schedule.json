@@ -1,0 +1,8 @@
+{
+  "_note": "Which profile runs when. Local wall-clock, using the timezone from bandwatch.json. A rule that crosses midnight is written normally (22:00 -> 06:00); the checker handles the wrap.",
+  "enabled": true,
+  "rules": [
+    { "from": "06:00", "to": "22:00", "profile": "watch-day" },
+    { "from": "22:00", "to": "06:00", "profile": "watch-night" }
+  ]
+}

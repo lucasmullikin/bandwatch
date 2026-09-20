@@ -1,0 +1,83 @@
+{
+  "_note": "Station settings. Copy to config/bandwatch.json and edit. Anything with no safe default is either absent here or null, and the code refuses to start rather than guessing -- a guessed value does not fail, it answers questions about somewhere you are not.",
+
+  "station": {
+    "_note": "REQUIRED. Your receiver's position. ADS-B distance rules and satellite pass prediction are measured from this point. Precision beyond about 3 decimal places buys you nothing and tells strangers where you live: 43.65 is a city, 43.6501234 is a house.",
+    "lat": null,
+    "lon": null,
+    "alt_m": 0
+  },
+
+  "timezone": "UTC",
+  "_timezone_note": "An IANA zone, e.g. America/Denver or Europe/Berlin. Quiet hours are wall-clock, local: applying a UTC 'quiet after 22:00' rule to a local station silences the wrong six hours.",
+
+  "retention_days": 14,
+  "audio_retention_days": 7,
+  "learning_hours": 24,
+  "_learning_note": "On a fresh install every signal is novel, so novelty alerting stays suppressed for this many hours while a baseline forms. Watch the suppression actually fire before trusting it -- a guard you have never seen work is not a guard.",
+
+  "budget_gb": 50.0,
+  "min_free_gb": 15.0,
+  "log_max_mb": 64.0,
+  "min_clip_bytes": 3500,
+
+  "notify_enabled": false,
+  "_notify_enabled_note": "Alerting is OFF by default. Turn it on only once you have watched the rules fire in the console and agree with them; an alert path you have not calibrated trains you to ignore it, and then the one that mattered arrives and nothing happens.",
+  "notifier": "none",
+  "_notifier_note": "One of: none, webhook, command. See notify/README.md to add another.",
+  "notify": {
+    "webhook": {
+      "url": "",
+      "method": "POST",
+      "headers": {},
+      "timeout_s": 10
+    },
+    "command": {
+      "_note": "Run a program with the alert JSON on stdin. This is how you reach anything with a CLI -- signal-cli, ntfy, a pager gateway, a shell script. argv is a LIST, never a shell string: alerts carry text that arrived over the air from someone you do not control.",
+      "argv": []
+    }
+  },
+
+  "max_alerts_per_hour": 4,
+  "max_per_rule_per_hour": 3,
+  "quiet_start": "22:00",
+  "quiet_end": "07:00",
+  "no_notify_rules": [],
+  "_no_notify_note": "Rules listed here are still RECORDED and still shown in the console; only the push is withheld. Withheld is a DISTINCT state from undelivered -- conflating them makes a backlog that grows forever and means nothing. A station near a busy airport probably wants low_aircraft and notable_aircraft in here.",
+
+  "mqtt_host": "127.0.0.1",
+  "mqtt_port": 1883,
+
+  "transcribe_enabled": false,
+  "_transcribe_note": "Speech-to-text is OFF by default because it is the one part of this system that can invent evidence. Read docs/COVERAGE.md before enabling it. Whisper hallucinates confidently on silence: 30 s of noise became 'Thank you.', and 59% of airband transcripts on this author's station were fabrication.",
+  "transcribe_mode": "watchwords",
+  "_transcribe_mode_note": "watchwords = transcribe only clips whose cheap pass suggests a watchlist term; all = transcribe everything (expensive, and far more fabrication to filter).",
+  "transcribe_max_age_min": 25,
+  "transcribe_min_duration_s": 1.0,
+  "transcribe_channels": [
+    "FRS01", "FRS02", "FRS03", "FRS04", "FRS05", "FRS06", "FRS07",
+    "FRS08", "FRS09", "FRS10", "FRS11", "FRS12", "FRS13", "FRS14",
+    "GMRS15", "GMRS16", "GMRS17", "GMRS18", "GMRS19", "GMRS20", "GMRS21", "GMRS22",
+    "MURS1", "MURS2", "MURS3"
+  ],
+
+  "adsb_alert_agl_ft": 1500,
+  "adsb_alert_below_ft": null,
+  "_adsb_below_note": "Absolute MSL altitude below which an aircraft counts as low. Set it to your local ground elevation plus adsb_alert_agl_ft -- ADS-B reports MSL, so a flat AGL threshold is wrong by exactly your elevation. Leave null to compute it from station.alt_m.",
+  "adsb_alert_airport_nm": 5.0,
+  "adsb_alert_airport_lat": null,
+  "adsb_alert_airport_lon": null,
+  "_airport_note": "Aircraft within this many nautical miles of the airport are landing or departing, not loitering. Without it, every approach looks like an event. Null disables the exclusion.",
+  "adsb_alert_repeat_min": 60,
+  "no_novelty_alert_kinds": ["adsb", "acars", "uat", "vdl2"],
+
+  "models_enabled": false,
+  "_models_note": "Summarisation only, never ingest. No model sits in the detection path, so events keep logging when every model host is down. DSP detects; the model only summarises.",
+
+  "sat_auto_capture": false,
+  "sat_min_elevation": 40.0,
+  "sat_max_per_day": 4,
+  "sat_min_gap_min": 45,
+  "sat_tle_max_age_days": 3.0,
+  "_sat_note": "Weather-satellite capture is off by default for two reasons. NOAA-15/18/19 APT are all decommissioned (2025). And an indoor dipole cannot do LRPT: an 82-degree METEOR-M2 pass measured 1.6 dB SNR against the 6-8 dB needed, BER 0.41, and decoded zero bytes in 17 minutes. Note that a VERTICAL dipole NULLS AT ZENITH, so a high pass is its worst case, not its best -- 'wait for a better pass' is backwards indoors. A QFH or turnstile outdoors is the real fix."
+}
