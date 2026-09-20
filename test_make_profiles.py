@@ -105,3 +105,63 @@ def test_override_dwell_must_be_a_positive_int():
     for bad in (0, -5, "7200", 12.5):
         with pytest.raises(C.ConfigError):
             M.build_profiles(doc([{"id": "adsb", "seconds": bad}]))
+
+
+# ---------------------------------------------------------------- sweeps
+
+def sweep_doc(spec):
+    d = doc(["s"])
+    d["lanes"]["s"] = dict(spec)
+    d["profiles"][0]["devices"]["0"] = ["s"]
+    return d
+
+
+def built_sweep(spec):
+    return lanes_of(M.build_profiles(sweep_doc(spec)))["s"]
+
+
+def test_sweep_goes_through_the_append_safe_wrapper():
+    """Not raw rtl_power: it truncates, so a killed pass erased the record."""
+    cmd = built_sweep({"kind": "sweep", "range": "225M:400M:25k", "seconds": 150})["cmd"]
+    assert cmd[0].endswith("lane-survey.sh"), cmd
+    assert "rtl_power" not in cmd[0]
+
+
+def test_sweep_splits_the_range_into_the_wrapper_arguments():
+    cmd = built_sweep({"kind": "sweep", "range": "225M:400M:25k", "seconds": 150})["cmd"]
+    assert cmd[1] == "{DEV}"
+    assert cmd[2:5] == ["225M", "400M", "25k"]
+
+
+def test_sweep_exit_time_lands_inside_the_dwell():
+    """The whole point of deriving it: a hand-set -e drifts off its slot."""
+    for seconds in (30, 40, 60, 90, 150, 600):
+        cmd = built_sweep({"kind": "sweep", "range": "88M:108M:100k",
+                           "seconds": seconds})["cmd"]
+        exitsec = int(cmd[6])
+        assert exitsec < seconds or seconds <= 20, (seconds, exitsec)
+
+
+def test_sweep_gain_is_passed_through():
+    """survey_fm runs at 30; 40 overloads the front end on FM broadcast."""
+    cmd = built_sweep({"kind": "sweep", "range": "88M:108M:100k",
+                       "seconds": 60, "gain": "30"})["cmd"]
+    assert cmd[-1] == "30"
+
+
+def test_sweep_gain_defaults_to_40():
+    cmd = built_sweep({"kind": "sweep", "range": "88M:108M:100k", "seconds": 60})["cmd"]
+    assert cmd[-1] == "40"
+
+
+def test_sweep_min_per_hour_can_be_set_to_zero():
+    """A sweep over a band that is genuinely quiet must not fault hourly."""
+    lane = built_sweep({"kind": "sweep", "range": "902M:928M:12.5k",
+                        "seconds": 40, "min_per_hour": 0})
+    assert lane["expect_min_events_per_hour"] == 0
+
+
+def test_sweep_with_a_malformed_range_is_refused():
+    with pytest.raises(C.ConfigError) as e:
+        built_sweep({"kind": "sweep", "range": "225M-400M", "seconds": 60})
+    assert "LOW:HIGH:BINSIZE" in str(e.value)

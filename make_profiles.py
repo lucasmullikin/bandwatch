@@ -57,17 +57,35 @@ def _rtl433(lane, spec):
 
 
 def _sweep(lane, spec):
-    # rtl_power TRUNCATES its output, so line-count deltas read zero.
-    # mtime is the honest liveness signal for these.
+    # rtl_power TRUNCATES its output and only flushes completed hops, so a
+    # sweep killed at the end of its slot leaves nothing AND destroys what the
+    # previous run left. This used to call rtl_power directly, which meant the
+    # project shipped lane-survey.sh -- the wrapper written to fix exactly that,
+    # after it cost one station a lane's entire history -- and then used it for
+    # a single hand-edited lane. Every other sweep kept the bug the wrapper
+    # exists to prevent. They all go through it now.
+    #
+    # mtime, not line count, is still the honest liveness signal: the file is
+    # appended to rather than rewritten, so deltas are about growth.
     out = C.var("events", lane + ".csv")
+    # -e must land INSIDE the slot, with room to write. Deriving it from the
+    # dwell is the point: hand-maintained -e values drift away from the dwell
+    # they were chosen for, and nothing flags it when they do.
     dwell = max(20, spec["seconds"] - 10)
+    try:
+        low, high, binsize = spec["range"].split(":")
+    except ValueError:
+        raise C.ConfigError(
+            "lanes.json: lane %r has range %r; expected LOW:HIGH:BINSIZE, "
+            "e.g. \"225M:400M:25k\"" % (lane, spec.get("range")))
     return dict(
         event_file=out,
         self_terminating=True,
         count_mode="mtime",
         expect_min_events_per_hour=spec.get("min_per_hour", 1),
-        cmd=["rtl_power", "-d", "{DEV}", "-f", spec["range"],
-             "-g", str(spec.get("gain", "40")), "-i", "10", "-e", str(dwell), out])
+        cmd=[os.path.join(C.ROOT, "bin", "lane-survey.sh"), "{DEV}",
+             low, high, binsize, str(spec.get("interval", 10)), str(dwell),
+             out, str(spec.get("gain", "40"))])
 
 
 def _script(lane, spec):

@@ -21,11 +21,15 @@ set -uo pipefail
 # lane can never write to a different events directory than the console reads.
 . "$(dirname "${BASH_SOURCE[0]}")/bw-env.sh"
 DEV="$1"; LOW="$2"; HIGH="$3"; BIN="$4"; INTERVAL="$5"; EXITSEC="$6"; OUT="$7"
+# Optional 8th argument so existing 7-argument callers keep working unchanged.
+# survey_fm runs at 30: it is a known-good control against FM broadcast, where
+# 40 overloads the front end and the "control" stops being one.
+GAIN="${8:-40}"
 
 TMP="$(mktemp -t lanesurvey)" || exit 1
 trap 'rm -f "$TMP"' EXIT INT TERM
 
-rtl_power -d "$DEV" -f "${LOW}:${HIGH}:${BIN}" -g 40 -i "$INTERVAL" -e "$EXITSEC" "$TMP"
+rtl_power -d "$DEV" -f "${LOW}:${HIGH}:${BIN}" -g "$GAIN" -i "$INTERVAL" -e "$EXITSEC" "$TMP"
 rc=$?
 
 # Append even on a non-zero rc: a killed sweep still wrote every hop it finished,
@@ -35,6 +39,21 @@ if [ -s "$TMP" ]; then
   mkdir -p "$(dirname "$OUT")"
   cat "$TMP" >> "$OUT"
   echo "lane-survey: appended $rows row(s) to $OUT (rtl_power rc=$rc)"
+
+  # Appending fixes truncation and introduces unbounded growth in its place.
+  # One station's milair_survey.csv reached 19 MB this way, and nothing in the
+  # project would ever have reclaimed it: the disk pruner truncates oversized
+  # LOGS, and this is not a log. So the file is a rolling window -- when it
+  # passes the cap, the OLDEST half goes and the newest rows stay, because a
+  # sweep CSV is read for what the band is doing lately.
+  cap_mb="${BANDWATCH_SURVEY_MAX_MB:-16}"
+  cap=$(( cap_mb * 1024 * 1024 ))
+  sz=$(wc -c < "$OUT" | tr -d ' ')
+  if [ "$sz" -gt "$cap" ]; then
+    keep=$(( cap / 2 ))
+    tail -c "$keep" "$OUT" > "$OUT.trim" 2>/dev/null && mv "$OUT.trim" "$OUT"
+    echo "lane-survey: $OUT passed ${cap_mb}MB -- kept the newest $(( keep / 1024 ))KB"
+  fi
 else
   # Say so out loud. A survey that measured nothing must not look like a survey
   # that measured silence.
