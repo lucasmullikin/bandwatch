@@ -27,7 +27,8 @@ import time
 from datetime import datetime, timedelta, timezone
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DB = os.path.join(ROOT, "var", "events.db")
+VAR = os.environ.get("BANDWATCH_VAR") or os.path.join(ROOT, "var")
+DB = os.path.join(VAR, "events.db")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS health(
@@ -148,7 +149,7 @@ def collect(con):
         add("lane_yield", "_error", None, str(e)[:180])
 
     # --- watchdog: is the CHECKER itself alive
-    w = safe(lambda: json.load(open(os.path.join(ROOT, "var", "watchdog.json"))), {}) or {}
+    w = safe(lambda: json.load(open(os.path.join(VAR, "watchdog.json"))), {}) or {}
     if w.get("last_check"):
         try:
             d = datetime.fromisoformat(w["last_check"].replace("Z", "+00:00"))
@@ -161,7 +162,7 @@ def collect(con):
     # --- disk against the 50 GB budget
     try:
         total = 0
-        for dirpath, _dn, files in os.walk(os.path.join(ROOT, "var")):
+        for dirpath, _dn, files in os.walk(VAR):
             for f in files:
                 try:
                     total += os.path.getsize(os.path.join(dirpath, f))

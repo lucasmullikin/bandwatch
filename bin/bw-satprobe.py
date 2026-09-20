@@ -41,8 +41,9 @@ import time
 from datetime import datetime, timedelta, timezone
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+VAR = os.environ.get("BANDWATCH_VAR") or os.path.join(ROOT, "var")
 BIN = os.path.join(os.path.expanduser("~"), "homebrew", "bin")
-STATE = os.path.join(ROOT, "var", "state.json")
+STATE = os.path.join(VAR, "state.json")
 PAUSE_FMT = "/tmp/sdr_pause_dev%s"
 LRPT_MHZ = 137.9
 

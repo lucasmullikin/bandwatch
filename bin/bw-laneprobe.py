@@ -32,8 +32,9 @@ import time
 from datetime import datetime, timezone
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+VAR = os.environ.get("BANDWATCH_VAR") or os.path.join(ROOT, "var")
 BIN = os.path.join(os.path.expanduser("~"), "homebrew", "bin")
-STATE = os.path.join(ROOT, "var", "state.json")
+STATE = os.path.join(VAR, "state.json")
 PAUSE_FMT = "/tmp/sdr_pause_dev%s"
 
 # lane -> (device key in the profile, centre MHz, span kHz, what it is)
@@ -153,7 +154,7 @@ def capture_imminent():
     except Exception:
         return None
     for name in ("meteorcapture2.log", "meteorcapture.log"):
-        path = os.path.join(ROOT, "var", "logs", name)
+        path = os.path.join(VAR, "logs", name)
         try:
             for line in open(path):
                 if "pass " not in line or "->" not in line:

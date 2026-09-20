@@ -20,7 +20,7 @@ So it is selective by default:
   * a hard floor of `sat_min_gap_min` between captures, so two passes minutes
     apart cannot chain into a 35-minute blackout.
 
-Everything is in collector.json and the daily count is reported in the log, so
+Everything is in config/bandwatch.json and the daily count is reported in the log, so
 the cost is visible rather than implicit.
 """
 import json
@@ -31,12 +31,13 @@ import time
 from datetime import datetime, timedelta, timezone
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+VAR = os.environ.get("BANDWATCH_VAR") or os.path.join(ROOT, "var")
 sys.path.insert(0, ROOT)
 import bandwatch_config as C  # noqa: E402
 sys.path.insert(0, os.path.join(ROOT, "lanes"))
-LOG = os.path.join(ROOT, "var", "logs", "satwatch.log")
-STATE = os.path.join(ROOT, "var", "satwatch.json")
-TLE = os.path.join(ROOT, "var", "noaa.tle")
+LOG = os.path.join(VAR, "logs", "satwatch.log")
+STATE = os.path.join(VAR, "satwatch.json")
+TLE = os.path.join(VAR, "noaa.tle")
 # --- site -------------------------------------------------------------
 # From config, never hardcoded. Satellite geometry is computed FROM this point:
 # a wrong coordinate does not fail, it predicts passes over somewhere else and
@@ -46,7 +47,15 @@ TLE = os.path.join(ROOT, "var", "noaa.tle")
 # accuracy for a pass prediction; your exact address should not appear in
 # source, in a config file you might share, or in any request built from these
 # constants.
-SITE = C.station()
+# Resolved on first use -- see the note in bin/flight-track.py. A module that
+# demands configuration at import time cannot even print its own help.
+_SITE = []
+
+
+def SITE_():
+    if not _SITE:
+        _SITE.extend(C.station())
+    return _SITE
 # NOAA APT went off air in 2025; the live LRPT birds are the Meteors, both
 # on 137.9 MHz. Scheduling a NOAA pass books a radio to record silence.
 FREQS = {"METEOR-M2 3": 137.9000, "METEOR-M2 4": 137.9000}
@@ -81,7 +90,7 @@ def log(msg):
 def cfg():
     c = dict(DEFAULTS)
     try:
-        c.update(json.load(open(os.path.join(ROOT, "collector.json"))))
+        c.update(json.load(open(os.path.join(C.CONFIG, "bandwatch.json"))))
     except Exception:
         pass
     return c
@@ -132,8 +141,8 @@ def upcoming(min_el, hours=14):
     out = []
     for i in range(0, len(lines) - 2, 3):
         name = lines[i].strip()
-        for p in P.next_passes(lines[i + 1], lines[i + 2], SITE[0], SITE[1],
-                               SITE[2], start=now, hours=hours,
+        for p in P.next_passes(lines[i + 1], lines[i + 2], SITE_()[0], SITE_()[1],
+                               SITE_()[2], start=now, hours=hours,
                                min_elevation_deg=min_el, name=name):
             p["freq_mhz"] = FREQS.get(name)
             out.append(p)
@@ -154,7 +163,7 @@ def main():
     while True:
         c = cfg()
         if not c.get("sat_auto_capture", True):
-            log("auto-capture disabled in collector.json; idling")
+            log("auto-capture disabled in config/bandwatch.json; idling")
             time.sleep(900)
             continue
 

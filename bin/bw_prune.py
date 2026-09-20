@@ -30,9 +30,11 @@ import time
 from datetime import datetime, timezone
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-VAR = os.path.join(ROOT, "var")
+VAR = os.environ.get("BANDWATCH_VAR") or os.path.join(ROOT, "var")
 DB = os.path.join(VAR, "events.db")
-CONFIG = os.path.join(ROOT, "collector.json")
+CONFIG = os.path.join(
+    os.environ.get("BANDWATCH_CONFIG") or os.path.join(ROOT, "config"),
+    "bandwatch.json")
 
 PROTECTED = ("models", "tools", ".git", "docs", "conf", "profiles", "bin",
              "broker", "webui")
@@ -224,7 +226,7 @@ def prune_presence(apply=True):
     executed is not a rule, and this one governs data about people rather than
     tyre sensors, so it is the last one that should have been left declarative.
     """
-    db = os.path.join(ROOT, "var", "events.db")
+    db = os.path.join(VAR, "events.db")
     if not os.path.exists(db):
         return None
     try:

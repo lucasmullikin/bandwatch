@@ -35,12 +35,13 @@ import time
 from datetime import datetime, timedelta, timezone
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+VAR = os.environ.get("BANDWATCH_VAR") or os.path.join(ROOT, "var")
 sys.path.insert(0, ROOT)
 import bandwatch_config as C  # noqa: E402
 sys.path.insert(0, os.path.join(ROOT, "lanes"))
-STATE = os.path.join(ROOT, "var", "state.json")
-OUTDIR = os.path.join(ROOT, "var", "lrpt")
-TLE = os.path.join(ROOT, "var", "meteor.tle")
+STATE = os.path.join(VAR, "state.json")
+OUTDIR = os.path.join(VAR, "lrpt")
+TLE = os.path.join(VAR, "meteor.tle")
 PAUSE_FMT = "/tmp/sdr_pause_dev%s"
 # --- site -------------------------------------------------------------
 # From config, never hardcoded. Satellite geometry is computed FROM this point:
@@ -301,7 +302,7 @@ def capture(p, send=True):
 
 def _rpc(payload, timeout=120):
     import urllib.request
-    cfg = json.load(open(os.path.join(ROOT, "collector.json")))
+    cfg = json.load(open(os.path.join(C.CONFIG, "bandwatch.json")))
     req = urllib.request.Request(
         cfg["signal_rpc"], data=json.dumps(payload).encode(),
         headers={"Content-Type": "application/json"})
@@ -311,7 +312,7 @@ def _rpc(payload, timeout=120):
 
 def send_to_signal(images, p, outdir):
     import base64
-    cfg = json.load(open(os.path.join(ROOT, "collector.json")))
+    cfg = json.load(open(os.path.join(C.CONFIG, "bandwatch.json")))
     if not cfg.get("notify_enabled"):
         log("notify disabled; not sending")
         return False

@@ -27,7 +27,16 @@ STATE_NAME = "feedstate.json"
 
 
 def _state_path(root):
-    return os.path.join(root, "var", STATE_NAME)
+    """Where feed state is kept.
+
+    Follows BANDWATCH_VAR like every other piece of station data. `root` is
+    the fallback only -- a station may keep recordings and state on a
+    different disk from the checkout, and state written to the checkout while
+    everything else went elsewhere is how two halves of one system end up
+    disagreeing quietly.
+    """
+    var = os.environ.get("BANDWATCH_VAR") or os.path.join(root, "var")
+    return os.path.join(var, STATE_NAME)
 
 
 def _load(root):

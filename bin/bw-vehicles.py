@@ -38,7 +38,7 @@ import time
 from datetime import datetime, timedelta, timezone
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-VAR = os.path.join(ROOT, "var")
+VAR = os.environ.get("BANDWATCH_VAR") or os.path.join(ROOT, "var")
 DB = os.path.join(VAR, "events.db")
 CONFIG = os.path.join(
     os.environ.get("BANDWATCH_CONFIG") or os.path.join(ROOT, "config"),

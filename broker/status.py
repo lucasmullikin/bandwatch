@@ -40,7 +40,9 @@ def show_events(db):
 
 def show_status(state_path, root):
     state = json.load(open(state_path))
-    prof = json.load(open("%s/profiles/%s.json" % (root, state["profile"])))
+    prof = json.load(open(os.path.join(
+        os.environ.get("BANDWATCH_CONFIG") or os.path.join(root, "config"),
+        "profiles", state["profile"] + ".json")))
     print("broker    : %s" % ("RUNNING pid %s" % state["pid"] if state.get("pid") else "stopped"))
     print("profile   : %s" % state["profile"])
     print("started   : %s" % state.get("started_at"))

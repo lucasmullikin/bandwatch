@@ -37,12 +37,13 @@ import time
 from datetime import datetime, timedelta, timezone
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+VAR = os.environ.get("BANDWATCH_VAR") or os.path.join(ROOT, "var")
 sys.path.insert(0, ROOT)
 import bandwatch_config as C  # noqa: E402
 sys.path.insert(0, os.path.join(ROOT, "lanes"))
 BIN = os.path.join(os.path.expanduser("~"), "homebrew", "bin")
-STATE = os.path.join(ROOT, "var", "state.json")
-OUTDIR = os.path.join(ROOT, "var", "apt")
+STATE = os.path.join(VAR, "state.json")
+OUTDIR = os.path.join(VAR, "apt")
 PAUSE_FMT = "/tmp/sdr_pause_dev%s"
 # --- site -------------------------------------------------------------
 # From config, never hardcoded. Satellite geometry is computed FROM this point:
@@ -54,7 +55,7 @@ PAUSE_FMT = "/tmp/sdr_pause_dev%s"
 # source, in a config file you might share, or in any request built from these
 # constants.
 SITE = C.station()
-TLE_PATH = os.path.join(ROOT, "var", "noaa.tle")
+TLE_PATH = os.path.join(VAR, "noaa.tle")
 
 FREQS = {"NOAA 15": 137.6200, "NOAA 18": 137.9125, "NOAA 19": 137.1000}
 SATNUM = {"NOAA 15": 15, "NOAA 18": 18, "NOAA 19": 19}
@@ -184,7 +185,7 @@ def record(freq_mhz, seconds, dev, out_wav):
 
 def _rpc(payload, timeout=120):
     import urllib.request
-    cfg = json.load(open(os.path.join(ROOT, "collector.json")))
+    cfg = json.load(open(os.path.join(C.CONFIG, "bandwatch.json")))
     req = urllib.request.Request(
         cfg["signal_rpc"], data=json.dumps(payload).encode(),
         headers={"Content-Type": "application/json"})
@@ -195,7 +196,7 @@ def _rpc(payload, timeout=120):
 def send_to_signal(images, pass_info, wav):
     """Deliver the best image, with the caption a reader actually needs."""
     import base64
-    cfg = json.load(open(os.path.join(ROOT, "collector.json")))
+    cfg = json.load(open(os.path.join(C.CONFIG, "bandwatch.json")))
     if not cfg.get("notify_enabled"):
         log("notify disabled; not sending")
         return False

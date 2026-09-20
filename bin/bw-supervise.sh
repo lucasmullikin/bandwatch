@@ -29,9 +29,9 @@ say(){ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  $*" >> "$LOG"; }
 desired_profile(){
   local w c
   w="$("$ROOT/bin/schedule_check.py" --want 2>/dev/null)"
-  if [ -n "$w" ] && [ -f "$ROOT/profiles/$w.json" ]; then echo "$w"; return; fi
+  if [ -n "$w" ] && [ -f "$PROFILE_DIR/$w.json" ]; then echo "$w"; return; fi
   c="$(python3 -c "import json;print(json.load(open('"'"'$ROOT/var/state.json'"'"')).get('"'"'profile'"'"') or '"'"''"'"')" 2>/dev/null)"
-  if [ -n "$c" ] && [ -f "$ROOT/profiles/$c.json" ]; then echo "$c"; return; fi
+  if [ -n "$c" ] && [ -f "$PROFILE_DIR/$c.json" ]; then echo "$c"; return; fi
   echo "$PROFILE"
 }
 
@@ -102,7 +102,7 @@ while true; do
   fi
   # schedule / override: prints a profile name ONLY when a change is due
   want="$("$ROOT"/bin/schedule_check.py 2>/dev/null || true)"
-  if [ -n "$want" ] && [ -f "$ROOT/profiles/$want.json" ]; then
+  if [ -n "$want" ] && [ -f "$PROFILE_DIR/$want.json" ]; then
     say "schedule wants $want -- switching"
     "$ROOT/bin/bandwatch" profile "$want" >> "$LOG" 2>&1
     sleep 10
@@ -113,7 +113,7 @@ while true; do
   # radios down to recover a weather-satellite scheduler would be the wrong
   # trade -- worst case it would happen during the pass it exists to catch.
   if ! pgrep -f "[s]dr-satwatch.py" >/dev/null 2>&1; then
-    if [ "$(python3 -c 'import json;print(json.load(open("'"$ROOT"'/collector.json")).get("sat_auto_capture", True))' 2>/dev/null)" = "True" ]; then
+    if [ "$(python3 -c 'import json;print(json.load(open("'"$CONFIG"'/bandwatch.json")).get("sat_auto_capture", True))' 2>/dev/null)" = "True" ]; then
       say "satwatch not running -- starting it"
       ( trap '' HUP; exec "$ROOT/bin/bw-satwatch.py" \
           >> "$VAR/logs/satwatch.log" 2>&1 < /dev/null ) &

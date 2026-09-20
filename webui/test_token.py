@@ -26,7 +26,7 @@ class TestWorkerToken(unittest.TestCase):
         self.assertEqual(mode, 0o600, "token file is %o, expected 600" % mode)
 
     def test_token_lives_outside_version_control(self):
-        """collector.json is tracked; a secret there would reach the git remote."""
+        """config files can be shared; a secret in one would travel with them."""
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         rel = os.path.relpath(server.TOKEN_PATH, root)
         ignored = open(os.path.join(root, ".gitignore")).read().split()

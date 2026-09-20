@@ -36,7 +36,7 @@ import bandwatch_config as C  # noqa: E402
 CONFIG = C.CONFIG
 VAR = C.VAR
 DB = os.path.join(VAR, "events.db")
-VOICE_DIR = os.path.join(ROOT, "var", "voice")
+VOICE_DIR = os.path.join(VAR, "voice")
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import views  # noqa: E402
@@ -44,7 +44,10 @@ PORT = int(os.environ.get("BANDWATCH_UI_PORT", "9111"))
 ROLLUP_WINDOW = timedelta(minutes=10)
 
 KIND_LABEL = {"ism": "Sensor", "adsb": "Aircraft", "pager": "Pager", "voice": "Voice"}
-CONFIG = os.path.join(ROOT, "collector.json")
+# CONFIG is the config DIRECTORY (set above from bandwatch_config); this is
+# the station settings file inside it. They were briefly the same name, which
+# silently repointed SCHEDULE and STATIONS at a path inside a JSON file.
+CONFIG_FILE = os.path.join(CONFIG, "bandwatch.json")
 SDRCTL = os.path.join(ROOT, "bin", "bandwatch")
 
 # Control actions are POST-only on purpose: a GET endpoint that stops the
@@ -140,14 +143,14 @@ def _start_pump(proc):
     return epoch
 
 
-TOKEN_PATH = os.path.join(ROOT, "var", "worker_token")
+TOKEN_PATH = os.path.join(VAR, "worker_token")
 
 
 def worker_token():
     """The shared secret a transcription worker must present.
 
     Generated on first use and stored under var/, which is gitignored --
-    collector.json is tracked, so a secret there would be pushed to the git
+    config files can be shared, so a secret in one would travel to the git
     remote. Mode 600 because any local user could otherwise read it and
     forge a watchlist alert.
     """
@@ -174,16 +177,16 @@ def token_ok(supplied):
 
 def read_config():
     try:
-        return json.load(open(CONFIG))
+        return json.load(open(CONFIG_FILE))
     except Exception:
         return {}
 
 
 def write_config(cfg):
-    tmp = CONFIG + ".tmp"
+    tmp = CONFIG_FILE + ".tmp"
     with open(tmp, "w") as fh:
         json.dump(cfg, fh, indent=2)
-    os.replace(tmp, CONFIG)
+    os.replace(tmp, CONFIG_FILE)
 
 
 def _bracketed(pattern):
@@ -243,7 +246,7 @@ def list_profiles():
 
 def current_profile():
     try:
-        return json.load(open(os.path.join(ROOT, "var", "state.json"))).get("profile")
+        return json.load(open(os.path.join(VAR, "state.json"))).get("profile")
     except Exception:
         return None
 
@@ -297,7 +300,7 @@ def watchdog_state():
     run in two days" -- and the second case is what actually happened here.
     Surfacing the heartbeat makes the checker itself observable."""
     try:
-        with open(os.path.join(ROOT, "var", "watchdog.json")) as fh:
+        with open(os.path.join(VAR, "watchdog.json")) as fh:
             w = json.load(fh)
     except Exception:
         return {"last_check": None, "faults": None}
@@ -889,7 +892,7 @@ def listen_start(freq, mode, device):
     # FILE, so scanning argv for "-d 0" reports the device free while
     # rtl_airband still holds it -- rtl_fm then fails to open it and dies.
     # state.json paused=true is the broker's own authoritative signal.
-    statef = os.path.join(ROOT, "var", "state.json")
+    statef = os.path.join(VAR, "state.json")
     released = False
     for _ in range(150):          # 0.2s granularity instead of 1s
         try:
@@ -934,7 +937,7 @@ def listen_start(freq, mode, device):
            "-f", "mp3", "-flush_packets", "1", "pipe:1"]
 
     with _listen_lock:
-        errlog = open(os.path.join(ROOT, "var", "logs", "listen.log"), "ab")
+        errlog = open(os.path.join(VAR, "logs", "listen.log"), "ab")
         errlog.write(b"\n--- tune %s on dev %s ---\n"
                      % (str(freq).encode(), dev.encode()))
         errlog.flush()
@@ -1247,7 +1250,7 @@ class Handler(BaseHTTPRequestHandler):
             # serve a decoded satellite image out of var/. basename() alone is
             # not the guard: verify the resolved path really sits under var/
             rel = urllib.parse.unquote(path[len("/img/"):])
-            base = os.path.realpath(os.path.join(ROOT, "var"))
+            base = os.path.realpath(VAR)
             cand = os.path.realpath(os.path.join(base, rel))
             if cand.startswith(base + os.sep) and os.path.isfile(cand):
                 if qs.get("thumb"):
@@ -1409,8 +1412,75 @@ class Handler(BaseHTTPRequestHandler):
         return self._send(404, json.dumps({"error": "not found"}))
 
 
+def ensure_store():
+    """Create every table the console reads, if nothing has yet.
+
+    The console is often the first thing a new install opens, before the
+    collector has ever run. Without this, several panels return 500 against a
+    database that exists but is empty, and the software looks broken when it
+    is merely idle.
+
+    Four owners, because the schema genuinely is spread across four modules:
+    the collector owns the event store AND ITS MIGRATIONS (CREATE TABLE IF NOT
+    EXISTS does not add columns to an existing table, so running the DDL alone
+    leaves an older database missing columns the console queries), readings
+    owns its own table, and the health and spectrum tables are created by the
+    tools that write them. All of it is idempotent, so this is a no-op against
+    a live station.
+    """
+    os.makedirs(VAR, exist_ok=True)
+    for label, fn in (("event store", _init_events),
+                      ("readings", _init_readings),
+                      ("health", _init_health),
+                      ("spectrum", _init_spectrum)):
+        try:
+            fn()
+        except Exception as e:                  # noqa: BLE001
+            # Never fatal, and never silent: a read-only or unusual store
+            # should still serve the pages that do not need that table, but
+            # the operator has to be able to see why a panel is empty.
+            print("could not initialise %s: %s" % (label, e), flush=True)
+
+
+def _init_events():
+    sys.path.insert(0, os.path.join(ROOT, "broker"))
+    import collector as _c
+    _c.db_connect().close()          # runs SCHEMA *and* MIGRATIONS
+
+
+def _init_readings():
+    sys.path.insert(0, os.path.join(ROOT, "analysis"))
+    import readings as _rd
+    con = sqlite3.connect(DB)
+    _rd.ensure_schema(con)
+    con.commit()
+    con.close()
+
+
+def _init_health():
+    sys.path.insert(0, os.path.join(ROOT, "bin"))
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "_bw_health", os.path.join(ROOT, "bin", "bw-health.py"))
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    con = sqlite3.connect(DB)
+    con.executescript(m.SCHEMA)
+    con.commit()
+    con.close()
+
+
+def _init_spectrum():
+    sys.path.insert(0, os.path.join(ROOT, "analysis"))
+    import spectrum as _sp
+    con = sqlite3.connect(DB)
+    _sp._ensure_table(con)
+    con.close()
+
+
 if __name__ == "__main__":
     os.makedirs(VOICE_DIR, exist_ok=True)
+    ensure_store()
     srv = Server(("0.0.0.0", PORT), Handler)
     print("bandwatch UI on http://0.0.0.0:%d" % PORT, flush=True)
     srv.serve_forever()

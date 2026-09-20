@@ -26,11 +26,13 @@ import time
 from datetime import datetime, timedelta, timezone
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-VAR = os.path.join(ROOT, "var")
+VAR = os.environ.get("BANDWATCH_VAR") or os.path.join(ROOT, "var")
 DB = os.path.join(VAR, "events.db")
 STATE = os.path.join(VAR, "watchdog.json")
 LOG = os.path.join(VAR, "logs", "watchdog.log")
-CONFIG = os.path.join(ROOT, "collector.json")
+CONFIG = os.path.join(
+    os.environ.get("BANDWATCH_CONFIG") or os.path.join(ROOT, "config"),
+    "bandwatch.json")
 PAUSE_PREFIX = "sdr_pause_dev"
 HOME = os.path.expanduser("~")
 BIN = os.path.join(HOME, "homebrew", "bin")

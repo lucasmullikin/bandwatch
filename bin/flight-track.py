@@ -33,21 +33,39 @@ import time
 from datetime import datetime, timedelta
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+VAR = os.environ.get("BANDWATCH_VAR") or os.path.join(ROOT, "var")
 sys.path.insert(0, ROOT)
 import bandwatch_config as C  # noqa: E402
 
 # The airport this tracker measures approaches against. No default: a tracker
 # pointed at the wrong airport still produces confident distances and altitudes,
 # and nothing about the output looks wrong.
-_cfg = C.load("bandwatch")
-SITE_LAT = C.require(_cfg, "adsb_alert_airport_lat",
-                     "flight-track measures every approach against this airport.")
-SITE_LON = C.require(_cfg, "adsb_alert_airport_lon",
-                     "flight-track measures every approach against this airport.")
-SITE_ELEV = float((_cfg.get("station") or {}).get("alt_m") or 0.0) * 3.28084
+# Resolved on first use, not at import. Reading config at import time makes
+# the module uninstantiable -- and therefore untestable, and unable even to
+# print --help -- on a machine that has not been configured yet.
+_cache = {}
+
+
+def _cfg():
+    if "cfg" not in _cache:
+        _cache["cfg"] = C.load("bandwatch")
+    return _cache["cfg"]
+
+
+def _site():
+    """(lat, lon, elevation_ft) of the airport approaches are measured against."""
+    if "site" not in _cache:
+        c = _cfg()
+        lat = C.require(c, "adsb_alert_airport_lat",
+                        "flight-track measures every approach against this airport.")
+        lon = C.require(c, "adsb_alert_airport_lon",
+                        "flight-track measures every approach against this airport.")
+        elev = float((c.get("station") or {}).get("alt_m") or 0.0) * 3.28084
+        _cache["site"] = (float(lat), float(lon), elev)
+    return _cache["site"]
 SBS = ("127.0.0.1", 30003)
 HOLD = os.path.join(ROOT, "bin", "bw-hold")
-LOG = os.path.join(ROOT, "var", "logs", "flight-track.log")
+LOG = os.path.join(VAR, "logs", "flight-track.log")
 
 AIRLINE = re.compile(r"^[A-Z]{3}\d{1,4}$")
 REPORT_EVERY = 120
@@ -56,14 +74,13 @@ FEED_SILENT_ALERT = 120       # no SBS bytes this long => tell the operator
 SECTOR_HALF = 75.0            # accept origins within this many deg of bearing
 
 AIRPORTS = {
-    "PHX": (33.4342, -112.0116), "LAS": (36.0840, -75.1537),
+    "PHX": (33.4342, -112.0116), "LAS": (36.0840, -115.1537),
     "SEA": (47.4502, -122.3088), "PDX": (45.5887, -122.5975),
     "DEN": (39.8561, -104.6737), "SLC": (40.7899, -111.9791),
     "LAX": (33.9416, -118.4085), "SFO": (37.6213, -122.3790),
     "OAK": (37.7213, -122.2207), "SAN": (32.7338, -117.1933),
     "MSP": (44.8848, -93.2223),  "DFW": (32.8998, -97.0403),
     "ORD": (41.9742, -87.9073),  "SJC": (37.3639, -121.9289),
-    "SITE": (SITE_LAT, SITE_LON),
 }
 
 
@@ -85,7 +102,7 @@ def signal_send(text):
     """
     sys.path.insert(0, os.path.join(ROOT, "notify"))
     import notifiers
-    ok, detail = notifiers.send(_cfg, text)
+    ok, detail = notifiers.send(_cfg(), text)
     if not ok:
         log("NOTIFY ERROR: %s" % (detail or "no detail")[:200])
         return False
@@ -94,12 +111,15 @@ def signal_send(text):
 
 
 def geo(lat, lon):
-    dx = (lon - SITE_LON) * math.cos(math.radians(SITE_LAT)) * 60.0
-    dy = (lat - SITE_LAT) * 60.0
+    slat, slon, _ = _site()
+    dx = (lon - slon) * math.cos(math.radians(slat)) * 60.0
+    dy = (lat - slat) * 60.0
     return math.hypot(dx, dy), (math.degrees(math.atan2(dx, dy)) + 360.0) % 360.0
 
 
 def bearing_to(code):
+    if code == "SITE":
+        return geo(*_site()[:2])[1]
     if code not in AIRPORTS:
         return None
     return geo(*AIRPORTS[code])[1]
@@ -219,7 +239,7 @@ def score_departure(p, dest_brg, target_epoch):
     if p.dist > 150:
         return None
     climbing = (p.vr is not None and p.vr > 300) or \
-               (p.dist > p.min_dist + 3 and (p.alt or 0) > SITE_ELEV + 1500)
+               (p.dist > p.min_dist + 3 and (p.alt or 0) > _site()[2] + 1500)
     if not climbing:
         return None
     s = 100.0 * max(0.0, 1 - p.dist / 150.0)
@@ -404,7 +424,7 @@ def run(mode, want, ref_brg, code, target_epoch, emit):
 
         if mode == "arrive":
             if landed_at is None and (p.ground or
-                    (p.alt is not None and p.alt <= SITE_ELEV + 400
+                    (p.alt is not None and p.alt <= _site()[2] + 400
                      and (p.gs or 0) < 140 and (p.dist or 99) < 6)):
                 landed_at = now
                 emit("🛬 %s is down at BOI.\nOn the rollout — I'll say when it "

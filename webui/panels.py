@@ -66,6 +66,19 @@ EXPECTED_SILENT = {
 IMAGE_DIRS = ("lrpt", "apt")
 
 
+def _C():
+    """bandwatch_config, imported lazily.
+
+    `root` is still accepted by the functions below for call-site
+    compatibility, but data and config locations come from BANDWATCH_VAR and
+    BANDWATCH_CONFIG -- a station may keep either outside the checkout.
+    """
+    import sys
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    import bandwatch_config
+    return bandwatch_config
+
+
 def _parse(ts):
     if not ts:
         return None
@@ -82,7 +95,7 @@ def captures(root, limit=40):
     """Every satellite capture on disk, newest first, with its images."""
     out = []
     for sub in IMAGE_DIRS:
-        base = os.path.join(root, "var", sub)
+        base = os.path.join(_C().VAR, sub)
         if not os.path.isdir(base):
             continue
         for name in sorted(os.listdir(base), reverse=True):
@@ -99,7 +112,7 @@ def captures(root, limit=40):
                         fp = os.path.join(r, f)
                         imgs.append({
                             "name": f,
-                            "rel": os.path.relpath(fp, os.path.join(root, "var")),
+                            "rel": os.path.relpath(fp, _C().VAR),
                             "bytes": os.path.getsize(fp),
                         })
             if not imgs:
@@ -156,7 +169,7 @@ def lane_yield(db, root, hours=None):
         # overkill; the recorder names the directory after the lane, so voice
         # rows are attributed by counting all clips whose channel appears in
         # that lane's config. Simpler and honest: total voice per lane dir.
-        vdir = os.path.join(root, "var", "voice")
+        vdir = os.path.join(_C().VAR, "voice")
         voice = {}
         if os.path.isdir(vdir):
             for d in os.listdir(vdir):
@@ -226,7 +239,7 @@ def transcription_status(db, root, hours=24):
     cut = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat(
         timespec="seconds")
     try:
-        cfg = json.load(open(os.path.join(root, "collector.json")))
+        cfg = json.load(open(os.path.join(_C().CONFIG, "bandwatch.json")))
     except Exception:
         cfg = {}
     allow = set(cfg.get("transcribe_channels") or [])

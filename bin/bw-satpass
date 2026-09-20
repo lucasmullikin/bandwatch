@@ -35,11 +35,12 @@ import sys
 from datetime import datetime, timezone
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+VAR = os.environ.get("BANDWATCH_VAR") or os.path.join(ROOT, "var")
 sys.path.insert(0, ROOT)
 import bandwatch_config as C  # noqa: E402
 sys.path.insert(0, os.path.join(ROOT, "lanes"))
 # named for what it holds now, not for the satellites it used to track
-TLE_PATH = os.path.join(ROOT, "var", "weather.tle")
+TLE_PATH = os.path.join(VAR, "weather.tle")
 # --- site -------------------------------------------------------------
 # From config, never hardcoded. Satellite geometry is computed FROM this point:
 # a wrong coordinate does not fail, it predicts passes over somewhere else and
@@ -148,7 +149,7 @@ def main():
         p = match[0]
         start, end, secs = P.pass_window(p, margin_s=60)
         cfg = W.apt_lane_config(p["freq_mhz"], secs,
-                                os.path.join(ROOT, "var", "apt"))
+                                os.path.join(VAR, "apt"))
         print("# %s  %s -> %s  max %.1f deg (%s)"
               % (p["satellite"], p["start"][11:16], p["end"][11:16],
                  p["max_elevation_deg"], p["quality"]))

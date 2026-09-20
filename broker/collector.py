@@ -18,10 +18,12 @@ from datetime import datetime, timedelta, timezone
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import chanmap  # noqa: E402
-VAR = os.path.join(ROOT, "var")
+VAR = os.environ.get("BANDWATCH_VAR") or os.path.join(ROOT, "var")
 DB = os.path.join(VAR, "events.db")
 OFFSETS = os.path.join(VAR, "offsets.json")
-CONFIG = os.path.join(ROOT, "collector.json")
+CONFIG = os.path.join(
+    os.environ.get("BANDWATCH_CONFIG") or os.path.join(ROOT, "config"),
+    "bandwatch.json")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS events (
@@ -326,7 +328,7 @@ def ingest_voice(con, cfg):
     rtl_airband names files <channel>_<YYYYMMDD>_<HHMMSS>.<ext>; the channel is
     the label from the config. audio_path is UNIQUE so re-scanning is a no-op.
     """
-    vdir = os.path.join(ROOT, "var", "voice")
+    vdir = os.path.join(VAR, "voice")
     if not os.path.isdir(vdir):
         return 0
     # The airband configs are the authority for what frequency a channel
@@ -361,7 +363,7 @@ def ingest_voice(con, cfg):
             # if real speech is landing here the threshold is wrong.
             try:
                 if os.path.getsize(full) < int(cfg.get("min_clip_bytes", 3500)):
-                    rej = os.path.join(ROOT, "var", "voice", "rejected")
+                    rej = os.path.join(VAR, "voice", "rejected")
                     os.makedirs(rej, exist_ok=True)
                     os.replace(full, os.path.join(rej, "%s_%s" % (sub, fn)))
                     continue
@@ -1113,7 +1115,7 @@ def analyse_surveys(con, cfg, seen_mtimes):
         return 0, []
     found = 0
     news = []
-    evdir = os.path.join(ROOT, "var", "events")
+    evdir = os.path.join(VAR, "events")
     for lane, band in SURVEY_LANES.items():
         path = os.path.join(evdir, lane + ".csv")
         if not os.path.exists(path):
@@ -1168,7 +1170,7 @@ def prune(con, cfg):
             pass
         cur.execute("DELETE FROM voice WHERE id=?", (vid,))
     rcut = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()
-    rej = os.path.join(ROOT, "var", "voice", "rejected")
+    rej = os.path.join(VAR, "voice", "rejected")
     if os.path.isdir(rej):
         for fn in os.listdir(rej):
             fp = os.path.join(rej, fn)

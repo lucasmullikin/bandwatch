@@ -56,7 +56,7 @@ cmd_device() {
 
 cmd_start() {
   local profile="${1:-$DEFAULT_PROFILE}"
-  [ -f "$ROOT/profiles/$profile.json" ] || die "no such profile: $profile"
+  [ -f "$PROFILE_DIR/$profile.json" ] || die "no such profile: $profile"
   [ -n "$(broker_pid)" ] && { echo "already running (pid $(broker_pid)); stop first"; return 1; }
   local squatters; squatters=$(pgrep -f "$HOLDERS" 2>/dev/null)
   if [ -n "$squatters" ]; then
@@ -190,7 +190,7 @@ cmd_status() {
   [ -f "$STATE" ] || { echo "no state file -- never started"; return 1; }
   local c; c=$(collector_pid)
   echo "collector : $([ -n "$c" ] && echo "RUNNING pid $c" || echo stopped)"
-  local ne; ne=$(python3 -c "import json;print(json.load(open('$ROOT/collector.json'))['notify_enabled'])" 2>/dev/null)
+  local ne; ne=$(python3 -c "import json;print(json.load(open('$CONFIG/bandwatch.json'))['notify_enabled'])" 2>/dev/null)
   echo "notify    : $([ "$ne" = "True" ] && echo "LIVE -> Signal" || echo "DRY-RUN (nothing sent)")"
   local w; w=$(webui_pid)
   echo "webui     : $([ -n "$w" ] && echo "RUNNING pid $w -> :9111" || echo stopped)"
@@ -199,7 +199,7 @@ cmd_status() {
 
 cmd_lanes() {
   local profile="${1:-$DEFAULT_PROFILE}"
-  python3 "$ROOT/broker/status.py" --lanes "$ROOT/profiles/$profile.json"
+  python3 "$ROOT/broker/status.py" --lanes "$PROFILE_DIR/$profile.json"
 }
 
 cmd_events() { python3 "$ROOT/broker/status.py" --events "$VAR/events.db"; }

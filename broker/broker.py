@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 
 import sqlite3
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-VAR = os.path.join(ROOT, "var")
+VAR = os.environ.get("BANDWATCH_VAR") or os.path.join(ROOT, "var")
 LOGS = os.path.join(VAR, "logs")
 STATE = os.path.join(VAR, "state.json")
 LOCK_FMT = "/tmp/sdr_tuner_%s.lock"
@@ -389,7 +389,9 @@ def main():
     signal.signal(signal.SIGINT, on_signal)
 
     profile_name = sys.argv[1]
-    with open(os.path.join(ROOT, "profiles", profile_name + ".json")) as fh:
+    with open(os.path.join(
+            os.environ.get("BANDWATCH_CONFIG") or os.path.join(ROOT, "config"),
+            "profiles", profile_name + ".json")) as fh:
         profile = json.load(fh)
 
     # Carry the rotation cursor across restarts. Without this the persisted
