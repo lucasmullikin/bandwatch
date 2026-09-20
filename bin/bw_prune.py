@@ -128,7 +128,7 @@ def over_by(c):
     limit should win. They are not the same kind of fact. Exceeding our budget
     is ours to fix by deleting our data; a volume running out of free space on
     a shared disk usually is not, and the max() meant another project filling
-    the Mini read here as "bandwatch must delete eleven days of events".
+    the host read here as "bandwatch must delete eleven days of events".
     """
     _, total = footprint()
     need_budget = max(total - c["budget_gb"] * 1024 ** 3, 0)
@@ -175,7 +175,7 @@ def plan(need_budget, need_volume=0, retention_days=None, apply=False):
                     not fix it -- it just costs us the data as well.
 
     Conflating them cost a real station eleven days of its event history: the
-    Mini's disk filled, and because the stricter limit won, bandwatch spent six
+    host's disk filled, and because the stricter limit won, bandwatch spent six
     hours deleting its own events -- 1,068,613 rows to free 16 MB -- against a
     target that was never its to reach. So volume pressure buys only the cheap
     bytes (steps 1 and 2) and then says plainly whose problem it is.
