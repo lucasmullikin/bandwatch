@@ -29,7 +29,8 @@ LOCK_FMT = "/tmp/sdr_tuner_%s.lock"
 # The web UI creates this to borrow a radio for live listening. The broker
 # releases the device and idles rather than fighting for it -- two processes
 # cannot open the same dongle, and the loser gets a dead handle, not an error.
-PAUSE_FMT = "/tmp/sdr_pause_dev%s"
+sys.path.insert(0, ROOT)
+from bandwatch_config import PAUSE_FMT  # noqa: E402  one definition, see there
 OPEN_RETRY_S = 6        # a lane dying faster than this never opened the radio
 OPEN_RETRY_WAIT_S = 4   # give the previous holder time to release USB
 

@@ -87,3 +87,74 @@ class TestSafety(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestCodexFindings(unittest.TestCase):
+    """Regressions for what an outside review found in the first version.
+
+    Every one of these was a real defect that the original tests missed,
+    because they exercised the reporting logic and never the libusb or
+    filesystem plumbing underneath it.
+    """
+
+    SRC = open(os.path.join(HERE, "bw-radio-reset.py")).read()
+
+    def test_device_pointers_are_referenced_before_the_list_is_freed(self):
+        """libusb_free_device_list(lst, 1) unrefs every device in the list.
+
+        A list comprehension over the generator exhausts it, runs the finally,
+        and leaves every pointer dangling -- a use-after-free that does not
+        crash reliably, so it survives testing and fails later.
+        """
+        self.assertIn("libusb_ref_device", self.SRC)
+        self.assertIn("libusb_unref_device", self.SRC)
+        self.assertIn("def dongles(", self.SRC,
+                      "the refcounted accessor is gone; callers would hold "
+                      "freed device pointers again")
+
+    def test_main_does_not_iterate_each_dongle_directly(self):
+        """each_dongle yields REFERENCED devices; only dongles() unrefs them."""
+        body = self.SRC.split("def main(", 1)[1]
+        self.assertNotIn("each_dongle(lib, ctx)", body,
+                         "main iterates the raw generator again, so the refs "
+                         "it takes are never released")
+
+    def test_the_after_probe_refinds_by_serial(self):
+        """A reset can re-enumerate the device, invalidating the pointer.
+
+        Probing the old one gives a meaningless verdict at best.
+        """
+        after = self.SRC.split("rc = reset(lib, dev)", 1)[1][:900]
+        self.assertNotIn("probe(lib, dev)", after,
+                         "the post-reset probe still uses the pre-reset pointer")
+        self.assertIn("dongles(lib, ctx)", after)
+
+    def test_pause_path_is_shared_with_the_broker(self):
+        """Two spellings of the flag is a hold that holds nothing.
+
+        The first version wrote bandwatch_pause_dev* while the broker watched
+        sdr_pause_dev*, so the tool would reset a radio out from under a
+        running lane and nothing would report an error.
+        """
+        self.assertIn("from bandwatch_config import PAUSE_FMT", self.SRC)
+        broker = open(os.path.join(os.path.dirname(HERE), "broker", "broker.py")).read()
+        self.assertIn("from bandwatch_config import PAUSE_FMT", broker,
+                      "the broker defines its own PAUSE_FMT again")
+
+    def test_flag_is_created_without_following_symlinks(self):
+        """The path is predictable and /tmp is world-writable."""
+        self.assertIn("O_NOFOLLOW", self.SRC)
+        self.assertIn("O_EXCL", self.SRC)
+
+    def test_release_only_removes_our_own_flag(self):
+        """Two concurrent resets must not delete each other's hold."""
+        rel = self.SRC.split("\ndef release(slot, pid):", 1)[1][:600]
+        self.assertIn("== str(pid)", rel,
+                      "release() unlinks the flag without checking it is ours")
+
+    def test_hold_happens_inside_the_cleanup_try(self):
+        """An exception during the yield wait must not leak a flag."""
+        body = self.SRC.split("def main(", 1)[1]
+        try_at = body.index("        try:\n            if not a.no_hold:")
+        self.assertGreater(try_at, 0,
+                           "hold() moved back outside the try/finally")

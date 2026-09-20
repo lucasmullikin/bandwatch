@@ -33,6 +33,14 @@ CONF_DIR = os.path.join(CONFIG, "conf")
 PROFILE_DIR = os.path.join(CONFIG, "profiles")
 
 
+# The broker's "this radio is deliberately held" flag. ONE definition, because
+# two spellings of it is a silent failure: whoever writes the wrong name gets a
+# hold that holds nothing, and a tool then takes a radio out from under a
+# running lane. That happened -- the reset tool wrote bandwatch_pause_dev* while
+# the broker watched sdr_pause_dev*, and nothing reported an error.
+PAUSE_FMT = os.environ.get("BANDWATCH_PAUSE_FMT") or "/tmp/bandwatch_pause_dev%s"
+
+
 class ConfigError(Exception):
     """A required setting is missing or malformed. Always fatal, never defaulted."""
 

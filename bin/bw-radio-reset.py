@@ -53,7 +53,11 @@ import time
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 VID, PID = 0x0bda, 0x2838              # Realtek RTL2832U, every RTL-SDR
-PAUSE_FMT = "/tmp/bandwatch_pause_dev%s"
+try:                                   # one definition, shared with the broker
+    sys.path.insert(0, ROOT)
+    from bandwatch_config import PAUSE_FMT
+except Exception:                      # still usable on a broken checkout
+    PAUSE_FMT = "/tmp/bandwatch_pause_dev%s"
 HOLD_SECONDS = 45
 YIELD_WAIT = 20
 
@@ -113,6 +117,8 @@ def load_libusb():
         lib.libusb_claim_interface.restype = i
         lib.libusb_release_interface.argtypes = [v, i]
         lib.libusb_release_interface.restype = i
+        lib.libusb_ref_device.argtypes = [v]; lib.libusb_ref_device.restype = v
+        lib.libusb_unref_device.argtypes = [v]; lib.libusb_unref_device.restype = None
         return lib
     raise SystemExit(
         "bandwatch: libusb not found. Tried: %s\n"
@@ -121,7 +127,16 @@ def load_libusb():
 
 
 def each_dongle(lib, ctx):
-    """Yield (device_pointer, serial) for every RTL-SDR on the bus."""
+    """Yield (device_pointer, serial) for every RTL-SDR on the bus.
+
+    Each yielded device is REFERENCED before it leaves here, and the caller
+    must unref it (see `dongles`). libusb_free_device_list(lst, 1) unrefs every
+    device in the list, so without our own reference the pointers are dangling
+    the moment this generator is exhausted -- which is exactly what a list
+    comprehension over it does. Reading them afterwards is a use-after-free
+    that does not crash reliably, which is the worst kind: it survives testing
+    and fails later, in a tool you only run when something is already wrong.
+    """
     lst = ctypes.POINTER(ctypes.c_void_p)()
     n = lib.libusb_get_device_list(ctx, ctypes.byref(lst))
     try:
@@ -134,15 +149,34 @@ def each_dongle(lib, ctx):
                 continue
             h = ctypes.c_void_p()
             if lib.libusb_open(dev, ctypes.byref(h)) != 0:
+                lib.libusb_ref_device(dev)
                 yield dev, None            # present but unopenable
                 continue
             buf = ctypes.create_string_buffer(64)
             ln = lib.libusb_get_string_descriptor_ascii(h, d.iSerialNumber, buf, 64)
             serial = buf.value.decode("ascii", "replace") if ln > 0 else None
             lib.libusb_close(h)
+            lib.libusb_ref_device(dev)
             yield dev, serial
     finally:
         lib.libusb_free_device_list(lst, 1)
+
+
+def dongles(lib, ctx):
+    """Every RTL-SDR, as a list whose device pointers stay valid.
+
+    Returns (devices, release). Call release() when done -- it drops the
+    reference each device was given on the way out of each_dongle().
+    """
+    found = list(each_dongle(lib, ctx))
+
+    # Named drop(), not release(): there is already a module-level release()
+    # for the pause flag, and two functions with the same name in one file is
+    # how a reader -- or a grep -- ends up looking at the wrong one.
+    def drop():
+        for dev, _sn in found:
+            lib.libusb_unref_device(dev)
+    return found, drop
 
 
 def probe(lib, dev):
@@ -193,14 +227,31 @@ def hold(slot):
             time.sleep(HOLD_SECONDS)
         finally:
             os._exit(0)
-    with open(PAUSE_FMT % slot, "w") as fh:
+    # O_NOFOLLOW so a symlink planted at this predictable path cannot redirect
+    # the write; O_EXCL so a flag another process is already holding is never
+    # clobbered. Both matter because the path is guessable and world-writable.
+    path = PAUSE_FMT % slot
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
+    except FileExistsError:
+        os.kill(pid, 15)
+        os.waitpid(pid, 0)
+        raise SystemExit(
+            "bandwatch: %s already exists -- another hold is in force.\n"
+            "  If it is stale, the broker clears it once its PID dies." % path)
+    with os.fdopen(fd, "w") as fh:
         fh.write("%d\n" % pid)
     return pid
 
 
 def release(slot, pid):
+    # Only remove the flag if it is still OURS. Two resets running at once
+    # would otherwise delete each other's hold and both take the radio.
+    path = PAUSE_FMT % slot
     try:
-        os.unlink(PAUSE_FMT % slot)
+        with open(path) as fh:
+            if fh.read().strip() == str(pid):
+                os.unlink(path)
     except OSError:
         pass
     try:
@@ -281,9 +332,14 @@ def main():
     ctx = ctypes.c_void_p()
     if lib.libusb_init(ctypes.byref(ctx)) != 0:
         raise SystemExit("bandwatch: libusb_init failed")
+    # Bound before the try so the finally can always call it. Referencing a
+    # name the try block assigns would raise NameError from the finally and
+    # bury whatever actually went wrong.
+    drop_found = lambda: None                      # noqa: E731
     try:
-        found = [(dev, sn) for dev, sn in each_dongle(lib, ctx)]
+        found, drop_found = dongles(lib, ctx)
         if not found:
+            drop_found()
             raise SystemExit("bandwatch: no RTL-SDR found on the bus")
 
         if a.list:
@@ -310,17 +366,20 @@ def main():
         if not targets:
             raise SystemExit("bandwatch: serial %s is not on the bus" % want)
 
+        # Everything from the first hold() onwards lives inside this try, so
+        # no exception -- a Ctrl-C during the yield wait included -- can leave a
+        # pause flag behind with a live PID. The bounded child is the backstop,
+        # not the plan.
         held = []
-        if not a.no_hold:
-            slots = [a.slot] if a.slot is not None else ["0", "1"]
-            for s in slots:
-                held.append((s, hold(s)))
-            print("holding %s for up to %ds; waiting for the rotation to yield"
-                  % (", ".join("dev" + s for s, _ in held), HOLD_SECONDS))
-            time.sleep(min(YIELD_WAIT, HOLD_SECONDS - 5))
-
         ok = True
         try:
+            if not a.no_hold:
+                slots = [a.slot] if a.slot is not None else ["0", "1"]
+                for sl in slots:
+                    held.append((sl, hold(sl)))
+                print("holding %s for up to %ds; waiting for the rotation to yield"
+                      % (", ".join("dev" + sl for sl, _ in held), HOLD_SECONDS))
+                time.sleep(min(YIELD_WAIT, HOLD_SECONDS - 5))
             for dev, sn in targets:
                 before = probe(lib, dev)
                 print("\n%s" % (sn or "?"))
@@ -330,13 +389,19 @@ def main():
                 # re-enumeration. That is a success, not a failure.
                 print("  reset:  rc=%s%s" % (rc, " (re-enumerated)" if rc == -4 else ""))
                 time.sleep(2)
-                after = probe(lib, dev)
-                # the handle may be stale after a re-enumeration; re-find it
-                if not after["open"]:
-                    for d2, s2 in each_dongle(lib, ctx):
+                # Do NOT probe `dev` again. A reset can re-enumerate the device,
+                # which invalidates that pointer -- reading it is undefined and
+                # the verdict it produces would be meaningless even if it did
+                # not crash. Re-find the device by serial and probe THAT.
+                after = {"open": False, "kernel": None, "claim": None}
+                fresh, drop = dongles(lib, ctx)
+                try:
+                    for d2, s2 in fresh:
                         if s2 == sn:
                             after = probe(lib, d2)
                             break
+                finally:
+                    drop()
                 print("  after:  %s" % describe(after))
                 if after["claim"] == 0:
                     print("  -> usable")
@@ -353,6 +418,7 @@ def main():
                 print("\nreleased")
         return 0 if ok else 2
     finally:
+        drop_found()
         lib.libusb_exit(ctx)
 
 
