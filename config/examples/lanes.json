@@ -128,6 +128,8 @@
     }
   },
 
+  "_profiles_note": "Each profile picks which lanes run on which radio. A lane is named either as a bare id, which uses its dwell from the catalogue above, or as {\"id\": \"adsb\", \"seconds\": 7200} to give it a different dwell in THIS profile only. Only seconds and enabled may be overridden -- everything else about a lane has one copy, in the catalogue. The override is what makes an event profile do anything: pinning a lane for two hours is the difference between 'track this aircraft' and a rotation that happens to include ADS-B. A misspelled override field is an error rather than a silent no-op, because a profile that ignored it would still load, still rotate, and still look correct.",
+
   "profiles": [
     {
       "name": "watch-day",

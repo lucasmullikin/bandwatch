@@ -109,6 +109,52 @@ def build_lane(lane_id, spec):
     return base
 
 
+OVERRIDABLE = ("seconds", "enabled")
+
+
+def split_entry(entry, profile, dev):
+    """A profile's lane entry -> (lane_id, overrides).
+
+    Two spellings, because most lanes want the catalogue dwell and a few must
+    differ by duty cycle:
+
+        "adsb"                        the catalogue spec, unchanged
+        {"id": "adsb", "seconds": 7200}   the catalogue spec, pinned
+
+    Only `seconds` and `enabled` may be overridden. Anything else is refused
+    rather than ignored: a profile that silently drops "second": 7200 leaves
+    the lane on its catalogue dwell and still loads, rotates and looks correct,
+    which is the one failure this schema exists to prevent.
+    """
+    where = "lanes.json: profile %r device %s" % (profile, dev)
+    if isinstance(entry, str):
+        return entry, {}
+    if not isinstance(entry, dict):
+        raise C.ConfigError(
+            "%s has a lane entry that is neither a lane id nor an object: %r"
+            % (where, entry))
+    lane_id = entry.get("id")
+    if not isinstance(lane_id, str) or not lane_id:
+        raise C.ConfigError(
+            "%s has a lane entry with no 'id': %r.\n"
+            "  Write it as {\"id\": \"adsb\", \"seconds\": 7200}." % (where, entry))
+    unknown = sorted(k for k in entry if k != "id" and k not in OVERRIDABLE)
+    if unknown:
+        raise C.ConfigError(
+            "%s lane %r overrides unknown field(s): %s.\n"
+            "  A profile may override only %s -- everything else about a lane\n"
+            "  belongs in the catalogue, where there is one copy of it."
+            % (where, lane_id, ", ".join(unknown), " and ".join(OVERRIDABLE)))
+    if "seconds" in entry:
+        secs = entry["seconds"]
+        # bool is an int in Python and would sail through as a 1-second dwell.
+        if isinstance(secs, bool) or not isinstance(secs, int) or secs <= 0:
+            raise C.ConfigError(
+                "%s lane %r has seconds %r; a dwell is a positive whole number "
+                "of seconds" % (where, lane_id, secs))
+    return lane_id, {k: entry[k] for k in OVERRIDABLE if k in entry}
+
+
 def build_profiles(doc):
     lanes = doc.get("lanes")
     if not isinstance(lanes, dict) or not lanes:
@@ -126,7 +172,8 @@ def build_profiles(doc):
                     "  Pin every radio by serial -- librtlsdr index order is not stable\n"
                     "  across a replug, and a swapped index looks like bad reception,\n"
                     "  never like an error. Find yours with:  rtl_test -t" % dev)
-            missing = [i for i in ids if i not in lanes]
+            entries = [split_entry(e, p["name"], dev) for e in ids]
+            missing = [i for i, _ in entries if i not in lanes]
             if missing:
                 raise C.ConfigError(
                     "lanes.json: profile %r device %s references undefined lane(s): %s"
@@ -134,7 +181,10 @@ def build_profiles(doc):
             out["devices"][dev] = {
                 "label": meta.get("label", ""),
                 "serial": serial,
-                "lanes": [build_lane(i, lanes[i]) for i in ids],
+                # dict(catalogue) first: an override must never write through
+                # into the catalogue, or it would follow the lane into every
+                # profile built after this one.
+                "lanes": [build_lane(i, dict(lanes[i], **ov)) for i, ov in entries],
             }
         built.append(out)
     if not built:
