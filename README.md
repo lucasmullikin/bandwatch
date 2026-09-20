@@ -17,6 +17,13 @@ bandwatch events            what has actually been heard
 bandwatch device            prove the dongles are present and free
 ```
 
+![The activity feed: decodes, recordings, transcripts, and a watchlist hit](docs/img/activity.png)
+
+*The activity feed. A watchlist hit is flagged in red; clips whose audio has
+aged past its retention window say so rather than offering a dead player.
+Screenshots use a synthetic demo station — invented sensors, invented
+aircraft — because a real one is somebody's actual radio traffic.*
+
 ---
 
 ## The problem this actually solves
@@ -71,6 +78,55 @@ on a fixed lane gets a tuned antenna; a rotating dongle needs a wideband one.
 **DSP detects. A model only ever summarises.** No LLM sits in the ingest path,
 so events keep logging when every model host is down, and nothing that reaches
 the event store was invented by a language model.
+
+## How it fits together
+
+```mermaid
+flowchart TB
+    subgraph radios["Two RTL-SDR dongles, pinned by serial"]
+        D0["dev0 · low band<br/>118–174 MHz"]
+        D1["dev1 · high band<br/>225–1090 MHz"]
+    end
+
+    BROKER["broker<br/>holds one flock per device<br/>rotates lanes, persists the cursor<br/>as a lane ID before each run"]
+
+    subgraph lanes["Lanes — one at a time per radio"]
+        V["voice<br/>rtl_airband"]
+        S["sweeps<br/>rtl_power"]
+        R["sensors<br/>rtl_433"]
+        A["aircraft / paging<br/>readsb · dump978 · multimon-ng"]
+    end
+
+    COLL["collector<br/>normalises, dedupes, applies<br/>retention and the alert rules"]
+    DB[("SQLite event store<br/>events · voice · coverage<br/>readings · alerts · health")]
+    WEB["console :9111<br/>loopback by default"]
+    WD["watchdog<br/>faults a lane unrun for<br/>3 full cycles"]
+    NOTIFY["notifier<br/>webhook · command · none"]
+    ASR["transcription worker<br/>separate process, usually<br/>another machine"]
+
+    D0 --> BROKER
+    D1 --> BROKER
+    BROKER --> V & S & R & A
+    V -->|clips| COLL
+    S -->|carriers| COLL
+    R -->|decodes| COLL
+    A -->|decodes| COLL
+    COLL --> DB
+    DB --> WEB
+    DB --> WD
+    COLL --> NOTIFY
+    DB <-->|"/api/pending · /api/transcript<br/>(token required)"| ASR
+    WD -.->|repair| BROKER
+```
+
+**No model sits anywhere on that path into the store.** DSP detects; a model
+only ever summarises what is already recorded. That is why events keep logging
+when every model host is down, and why nothing in the event store was invented
+by a language model.
+
+The **coverage** table is what makes the console able to say what it did *not*
+hear: every lane run is recorded with its start and end, so "nothing heard" can
+be qualified as "nothing heard during the 1/N of wall clock we were listening".
 
 ## What it receives
 
@@ -138,6 +194,12 @@ bin/bandwatch status
 ```
 
 The console is on `http://127.0.0.1:9111`.
+
+![The tune panel: a station directory cross-referenced against live activity](docs/img/tune.png)
+
+*The Tune panel. Your reference list of what is worth hearing, annotated with
+what has actually been heard recently — a scanner with a URL instead of a
+knob.*
 
 **Before you enable transcription or alerting, read
 [`docs/COVERAGE.md`](docs/COVERAGE.md).** Both are off by default and both
@@ -313,6 +375,21 @@ asserting anything still shows green.
   30 s peak-hold and then produced zero audio across 317 recorded runs at two
   squelch settings. A +16 dB peak is not a +16 dB transmission — confirm with a
   recorded lane before believing a frequency.
+
+## Roadmap
+
+**More than two radios.** The device map is currently `"0"` and `"1"` — two
+dongles, split low band and high band by antenna. Nothing about the broker, the
+rotation or the coverage accounting is inherently two-device, but the config
+schema, the profile generator and parts of the console assume that pair. Making
+the count arbitrary is the next structural change: three or four radios means
+more of the spectrum held simultaneously instead of rotated through, and a lane
+that currently waits its turn could simply be pinned. One radio should work
+too — a single-dongle station is the obvious starting point for anyone trying
+this, and today it is awkward.
+
+**A portable build.** Everything here assumes mains power and an always-on
+machine. A field version is a different set of constraints.
 
 ## Contributing
 

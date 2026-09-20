@@ -20,7 +20,9 @@ config/conf/
 config/profiles/
 
 # Third-party decoders and datasets: large, re-downloadable, not ours.
-tools/
+# The build notes ARE ours and do ship.
+tools/*
+!tools/README.md
 models/
 enrich/data/
 
