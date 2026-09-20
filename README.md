@@ -236,6 +236,38 @@ Withheld-by-policy, delivered, and failed are three distinct states. Collapsing
 the first two into one makes an undelivered backlog that grows forever and
 means nothing.
 
+## When a radio wedges
+
+An RTL-SDR can stop delivering samples while still enumerating perfectly:
+listed, right serial, tuner detected, and every open refused. readsb calls it
+`SDR wedged, exiting!`, rtl_433 says `PLL not locked`, rtl_power writes an
+empty file. **Restarting the software cannot fix it** — the fault is below the
+software. On the author's station that cost two days of the watchdog
+restarting a loop that could never help.
+
+```
+bandwatch radios              can each dongle actually be CLAIMED?
+bandwatch radios-reset        USB-reset every dongle
+bandwatch radios-reset 1      just the one pinned to device 1
+```
+
+`radios` answers a different question from `device`. `device` asks *is it
+plugged in*; `radios` asks *can anything actually use it*, which is the one
+that matters when lanes produce nothing.
+
+The reset tool reports rather than claims: it probes the interface **before**
+and **after**, so the answer is measured, not inferred from a return code. And
+it distinguishes **busy from broken** — a radio in use by a running lane
+refuses a claim exactly like a wedged one does, and calling that a fault would
+send you resetting a healthy dongle mid-recording.
+
+The watchdog runs this automatically when it detects a dead radio, at most once
+an hour per radio, and says plainly when the reset did not help — because the
+remaining fix is physical and no amount of retrying substitutes for it:
+
+> A USB reset clears a stuck claim; it cannot clear a dongle whose firmware has
+> hung. That needs its power removed: unplug it and plug it back in.
+
 ## Who can reach the console
 
 The console can start and stop the pipeline, take a radio out of the rotation

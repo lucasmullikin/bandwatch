@@ -36,6 +36,8 @@ for pkg in analysis broker webui enrich; do
   run "$pkg" bash -c "cd '$pkg' && python3 -m unittest discover -p 'test_*.py' -v 2>&1 | tail -20"
 done
 
+run "radio reset tool" bash -c "python3 -m unittest discover -s bin -p 'test_radio_reset.py' 2>&1 | tail -6"
+
 run "lanes (weathersat)" python3 lanes/run_tests.py
 
 # Script-style checks. Each exits non-zero on failure.

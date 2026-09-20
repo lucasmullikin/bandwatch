@@ -9,6 +9,8 @@
 #   bandwatch lanes [profile]   list lanes per device
 #   bandwatch events            what has been heard
 #   bandwatch device            prove the dongles are present and free
+#   bandwatch radios            per-dongle health: can each one be CLAIMED?
+#   bandwatch radios-reset [n]  USB-reset a wedged dongle (all, or one slot)
 #   bandwatch ui                open the web feed URL
 #   bandwatch profile <name>    switch profile
 #
@@ -204,6 +206,20 @@ cmd_lanes() {
 
 cmd_events() { python3 "$ROOT/broker/status.py" --events "$VAR/events.db"; }
 
+# A dongle can enumerate perfectly and still be unusable -- listed, right
+# serial, tuner detected, and every open refused. `device` answers "is it
+# plugged in"; this answers "can anything actually USE it", which is the
+# question that matters when lanes are producing nothing.
+cmd_radios() { python3 "$ROOT/bin/bw-radio-reset.py" --list; }
+
+cmd_radios_reset() {
+  if [ -n "${1:-}" ]; then
+    python3 "$ROOT/bin/bw-radio-reset.py" --slot "$1"
+  else
+    python3 "$ROOT/bin/bw-radio-reset.py" --all
+  fi
+}
+
 case "${1:-status}" in
   start)   shift; cmd_start "$@" ;;
   stop)    cmd_stop ;;
@@ -214,6 +230,8 @@ case "${1:-status}" in
   lanes)   shift; cmd_lanes "$@" ;;
   events)  cmd_events ;;
   device)  cmd_device ;;
+  radios)  cmd_radios ;;
+  radios-reset) shift; cmd_radios_reset "${1:-}" ;;
   ui)      echo "http://$(ipconfig getifaddr en0 2>/dev/null || echo 127.0.0.1):9111" ;;
   profile) shift; [ -n "${1:-}" ] || die "profile needs a name"; cmd_stop; sleep 2; cmd_start "$1" ;;
   *) sed -n '2,14p' "$0" ;;

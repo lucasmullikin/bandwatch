@@ -361,6 +361,43 @@ def record_mute(dev, lane, reason, fails):
         pass
 
 
+RESET_COOLDOWN_MIN = 60       # at most one USB reset per radio per hour
+RESET_TOOL = os.path.join(ROOT, "bin", "bw-radio-reset.py")
+
+
+def try_radio_reset(state, dev):
+    """Attempt a USB device reset for one logical radio. Returns what happened.
+
+    Deliberately reports rather than claims. The tool re-probes the device
+    AFTER resetting it, so the answer is measured, not assumed -- and when a
+    reset cannot help, saying so plainly is the useful output, because the
+    remaining fix is physical and no amount of retrying substitutes for it.
+    """
+    last = (state.setdefault("radio_resets", {}) or {}).get(str(dev))
+    if last:
+        try:
+            age = (now() - parse_iso(last)).total_seconds() / 60.0
+            if age < RESET_COOLDOWN_MIN:
+                return ("reset skipped, last attempt %.0f min ago (cooldown %d min) "
+                        "-- if it is still dead the fix is physical"
+                        % (age, RESET_COOLDOWN_MIN))
+        except Exception:
+            pass
+    if not os.path.exists(RESET_TOOL):
+        return "reset tool missing at %s" % RESET_TOOL
+    state["radio_resets"][str(dev)] = now().isoformat(timespec="seconds")
+    try:
+        out = subprocess.run([sys.executable, RESET_TOOL, "--slot", str(dev)],
+                             capture_output=True, text=True, timeout=120)
+    except Exception as e:                        # noqa: BLE001
+        return "reset failed to run: %s" % e
+    tail = [l.strip() for l in (out.stdout or "").splitlines() if l.strip()][-3:]
+    if out.returncode == 0:
+        return "USB reset ran and the radio is claimable again | %s" % " ".join(tail)
+    return ("USB reset ran and the radio is STILL unusable -- unplug it and plug "
+            "it back in | %s" % " ".join(tail))
+
+
 def repair(reason):
     log("REPAIR: %s" % reason)
     for p in stale_pause_flags():
@@ -493,8 +530,16 @@ def main():
     dead_only = all("the radio is the common factor" in r for _, r in faults)
     if dead_only:
         log("dead radio -- NOT restarting (the fault is below the software)")
-        notify("SDR watchdog: a radio has stopped producing entirely.\n%s"
-               % "\n".join("dev%s: %s" % (d, r) for d, r in faults))
+        # Try the one recovery that can actually work here: a USB device reset.
+        # Restarting the stack cannot clear a stuck interface claim; a reset
+        # can. Bounded to one attempt per device per RESET_COOLDOWN_MIN so a
+        # radio that is physically gone does not get reset every cycle forever.
+        outcomes = []
+        for dev, _r in faults:
+            outcomes.append("dev%s: %s" % (dev, try_radio_reset(s, dev)))
+        notify("SDR watchdog: a radio has stopped producing entirely.\n%s\n\n%s"
+               % ("\n".join("dev%s: %s" % (d, r) for d, r in faults),
+                  "\n".join(outcomes)))
         s["repairs"] = [r for r in s["repairs"] if r.get("ts", "") >= cut]
         save_state(s)
         return 1
