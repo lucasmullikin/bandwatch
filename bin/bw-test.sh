@@ -15,14 +15,19 @@ set -uo pipefail
 # lane can never write to a different events directory than the console reads.
 . "$(dirname "${BASH_SOURCE[0]}")/bw-env.sh"
 cd "$(dirname "$0")/.." || exit 2
-PY="./.venv-test/bin/pytest"
+# ABSOLUTE. Each test runs from its own directory, and a relative interpreter
+# then resolves against that directory rather than the project: "../.venv-test"
+# is correct for broker/ and webui/ and points outside the repo for any test
+# file at the root, which pytest reports as a collection error -- indistinguish-
+# able here from a test file that protects nothing.
+PY="$(pwd)/.venv-test/bin/pytest"
 [ -x "$PY" ] || { echo "no test venv -- python3 -m venv .venv-test && .venv-test/bin/pip install pytest"; exit 2; }
 
 fail=0
 total=0
 for t in $(find . -name "test_*.py" -not -path "./tools/*" -not -path "./.venv*" | sort); do
   d=$(dirname "$t"); f=$(basename "$t")
-  out=$(cd "$d" && "../${PY#./}" "$f" -q 2>&1 | tail -4)
+  out=$(cd "$d" && "$PY" "$f" -q 2>&1 | tail -4)
   n=$(printf '%s' "$out" | grep -oE '[0-9]+ passed' | grep -oE '^[0-9]+')
   n=${n:-0}
   if printf '%s' "$out" | grep -qE 'failed|error'; then
