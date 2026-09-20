@@ -329,7 +329,11 @@ def run_lane(dev, lane, dstate, slot=None):
     if rc is not None and not _stop.is_set() and not lane.get("self_terminating"):
         ls["early_exits"] += 1
 
-    record_coverage(dev, lane_id, dstate.get("_lane_started") or now(), now(), gained)
+    # LOGICAL slot, not the physical index. The coverage table is what the
+    # console attributes lane time to and what the watchdog asks "did this
+    # radio do anything recently" -- recording the physical index means both
+    # answer about the wrong radio the moment a replug swaps the order.
+    record_coverage(slot, lane_id, dstate.get("_lane_started") or now(), now(), gained)
     dstate["current_lane"] = None
     log("%s -> done %.0fs +%d events (total %d)" % (tag, elapsed, gained, ls["events_total"]))
     write_state()

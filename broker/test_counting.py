@@ -170,6 +170,46 @@ class TestLaneLabelling(unittest.TestCase):
                          "the WRONG radio after a replug")
 
 
+
+class TestCoverageAttribution(unittest.TestCase):
+    """Coverage rows must be attributed to the LOGICAL radio.
+
+    The coverage table is what the console credits lane time to, and what the
+    watchdog asks "has this radio done anything recently". Recording the
+    physical index means both answer about the wrong radio as soon as a replug
+    swaps librtlsdr's ordering -- which happened here 2026-09-20, and made a
+    day of per-device totals read inverted.
+
+    This was missed when the log tag and filename were fixed: three call sites
+    needed the logical slot and only two got it.
+    """
+
+    SRC = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "broker.py")).read()
+
+    def test_record_coverage_is_given_the_slot(self):
+        self.assertIn("record_coverage(slot, lane_id", self.SRC,
+                      "coverage is recorded against the physical index again")
+        # Check CALL SITES, not the definition -- `def record_coverage(dev,
+        # lane_id, ...)` legitimately contains that text, and asserting on it
+        # fails against correct code. A test that cannot tell a definition
+        # from a call is a test that gets deleted rather than believed.
+        calls = [l.strip() for l in self.SRC.splitlines()
+                 if "record_coverage(" in l and not l.lstrip().startswith("def ")]
+        self.assertTrue(calls, "no call to record_coverage at all")
+        for c in calls:
+            self.assertNotIn("record_coverage(dev,", c,
+                             "a call site still passes the physical index: %s" % c)
+
+    def test_every_label_site_uses_the_slot(self):
+        """All three: tag, log filename, coverage row."""
+        self.assertIn('tag = "dev%s/%s" % (slot, lane_id)', self.SRC)
+        self.assertIn('"lane-%s-%s.log" % (slot, lane_id)', self.SRC)
+        self.assertIn("record_coverage(slot,", self.SRC)
+
+    def test_the_command_still_gets_the_physical_index(self):
+        """NEGATIVE CONTROL: moving labels to the slot must not move {DEV}."""
+        self.assertIn('cmd = [c.replace("{DEV}", str(dev)) for c in lane["cmd"]]', self.SRC)
+
 # The entry point stays at the BOTTOM. Placed mid-file it runs before the
 # classes below are defined, so `python3 test_counting.py` silently skips them
 # while still reporting success -- the same trap that had been sitting in
