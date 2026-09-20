@@ -12,7 +12,8 @@ coordinates, band plan, watchlist and notifier credentials are not.
 |---|---|---|
 | `bandwatch.json` | coordinates, timezone, retention, alerting, transcription | **yes** |
 | `lanes.json` | lane catalogue and rotation profiles; device serials | **yes** |
-| `stations.json` | your band plan — the input to `make_confs.py` | for voice lanes |
+| `bandplan.json` | what you RECORD — the input to `make_confs.py` | for voice lanes |
+| `stations.json` | a wider REFERENCE list for the Tune panel; records nothing | no |
 | `schedule.json` | which profile runs at which hours | no |
 | `sensors.json` | devices you have explicitly claimed as your own | no |
 | `watchlist.json` | terms that escalate a clip to transcription | no |
@@ -20,7 +21,7 @@ coordinates, band plan, watchlist and notifier credentials are not.
 | `profiles/` | **generated** rotation profiles | — |
 
 `conf/` and `profiles/` are **outputs**. Hand-edit one and the next generator
-run reverts you without a word. Change `stations.json` or `lanes.json` and
+run reverts you without a word. Change `bandplan.json` or `lanes.json` and
 re-run:
 
 ```bash
@@ -39,7 +40,7 @@ cp config/examples/*.json config/
 Then set, in this order:
 
 1. `bandwatch.json` → `station.lat`, `station.lon`, `timezone`
-2. `stations.json` → replace the three sets marked `"replace_me"`
+2. `bandplan.json` → replace the three sets marked `"replace_me"`
 3. `lanes.json` → `devices.*.serial` for each dongle
 
 ## Keeping it somewhere else

@@ -1,0 +1,218 @@
+{
+  "_note": "The channel table make_confs.py turns into rtl_airband configs -- i.e. what this station actually RECORDS. It is the one file whose contents depend on where you are. Sets marked \"replace_me\": true are refused by make_confs.py until you edit them: a placeholder frequency does not fail loudly, it records silence and looks healthy doing it. Distinct from stations.json, which is a wider REFERENCE list for the Tune panel and records nothing.",
+  "_how_to_find_your_own": [
+    "Run the survey lanes first and read the output before recording anything:",
+    "  bandwatch start   then   bandwatch lanes",
+    "air_survey sweeps 118-137 MHz and shows which airband channels near you are actually live.",
+    "milair_survey sweeps 225-400 MHz for military air.",
+    "Public references (RadioReference, your national regulator's licence database) tell you what SHOULD be there; the survey tells you what IS. Trust the survey.",
+    "A peak-hold sweep OVERSTATES a burst: +16 dB on a 30 s peak-hold is not a +16 dB transmission, and on this author's site six channels that looked busy produced zero audio in 317 runs. Confirm with a recorded lane before believing a frequency."
+  ],
+  "sets": {
+    "guard121": {
+      "mode": "am",
+      "note": "International aviation DISTRESS. Expected silent; a recording here matters. Same frequency worldwide.",
+      "channels": [
+        [
+          "GUARD_121_5",
+          121.5
+        ]
+      ]
+    },
+    "guard243": {
+      "mode": "am",
+      "note": "Military UHF guard/distress -- the 121.5 twin. Same frequency worldwide.",
+      "channels": [
+        [
+          "MIL_GUARD_243",
+          243.0
+        ]
+      ]
+    },
+    "frs": {
+      "mode": "nfm",
+      "note": "All 15 FRS/GMRS 462 channels -- 175 kHz block, one slice, simultaneous. US allocation. 'Privacy codes' are CTCSS squelch tones, NOT encryption.",
+      "channels": [
+        [
+          "GMRS15",
+          462.55
+        ],
+        [
+          "FRS01",
+          462.5625
+        ],
+        [
+          "GMRS16",
+          462.575
+        ],
+        [
+          "FRS02",
+          462.5875
+        ],
+        [
+          "GMRS17",
+          462.6
+        ],
+        [
+          "FRS03",
+          462.6125
+        ],
+        [
+          "GMRS18",
+          462.625
+        ],
+        [
+          "FRS04",
+          462.6375
+        ],
+        [
+          "GMRS19",
+          462.65
+        ],
+        [
+          "FRS05",
+          462.6625
+        ],
+        [
+          "GMRS20",
+          462.675
+        ],
+        [
+          "FRS06",
+          462.6875
+        ],
+        [
+          "GMRS21",
+          462.7
+        ],
+        [
+          "FRS07",
+          462.7125
+        ],
+        [
+          "GMRS22",
+          462.725
+        ]
+      ]
+    },
+    "frs467": {
+      "mode": "nfm",
+      "note": "FRS 8-14 low-power block at 467. US allocation.",
+      "channels": [
+        [
+          "FRS08",
+          467.5625
+        ],
+        [
+          "FRS09",
+          467.5875
+        ],
+        [
+          "FRS10",
+          467.6125
+        ],
+        [
+          "FRS11",
+          467.6375
+        ],
+        [
+          "FRS12",
+          467.6625
+        ],
+        [
+          "FRS13",
+          467.6875
+        ],
+        [
+          "FRS14",
+          467.7125
+        ]
+      ]
+    },
+    "murs": {
+      "mode": "nfm",
+      "note": "MURS 1-3 (151 block). US allocation. MURS 4-5 at 154.57/154.60 are 2.7 MHz away and need their own slice.",
+      "channels": [
+        [
+          "MURS1",
+          151.82
+        ],
+        [
+          "MURS2",
+          151.88
+        ],
+        [
+          "MURS3",
+          151.94
+        ]
+      ]
+    },
+    "vhf_fire": {
+      "mode": "nfm",
+      "note": "US VHF fire mutual-aid (VFIRE21-23). Nationally allocated, but whether anything near you still simulcasts in the clear is local and increasingly rare -- most agencies have moved to 700/800 MHz. Confirm with a sweep before enabling the lane.",
+      "channels": [
+        [
+          "VFIRE21",
+          154.28
+        ],
+        [
+          "VFIRE22",
+          154.265
+        ],
+        [
+          "VFIRE23",
+          154.295
+        ]
+      ]
+    },
+    "air_tower": {
+      "replace_me": true,
+      "mode": "am",
+      "note": "REPLACE: your local tower and approach. Channels within about 1.5 MHz of each other land in one 2.4 MHz slice and are heard simultaneously; further apart needs a second set. Find them with the air_survey lane, or from your national aeronautical publication.",
+      "channels": [
+        [
+          "TWR_A",
+          118.1
+        ],
+        [
+          "TWR_B",
+          119.0
+        ],
+        [
+          "APP",
+          119.6
+        ]
+      ]
+    },
+    "air_ground": {
+      "replace_me": true,
+      "mode": "am",
+      "note": "REPLACE: your local ground control. ATIS is usually 2+ MHz away -- past the usable passband -- and is a repeating loop with little to say, so it is normally not worth a slice.",
+      "channels": [
+        [
+          "GND",
+          121.7
+        ]
+      ]
+    },
+    "milair": {
+      "replace_me": true,
+      "mode": "am",
+      "note": "REPLACE: UHF military air near you. These three are spacing placeholders, not real assignments -- seed them from milair_survey output. The lane stays disabled in lanes.json until you do.",
+      "channels": [
+        [
+          "MIL_A",
+          311.0
+        ],
+        [
+          "MIL_B",
+          311.2
+        ],
+        [
+          "MIL_C",
+          311.4
+        ]
+      ]
+    }
+  }
+}

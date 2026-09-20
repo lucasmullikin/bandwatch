@@ -256,6 +256,7 @@
   .np-freq{font-family:"IBM Plex Mono",monospace;font-size:17px;font-weight:600;
            font-variant-numeric:tabular-nums}
   .np-name{font-size:13px;color:var(--muted)}
+  .np-hint{display:block;margin-top:7px;font-size:12px;color:var(--warn,#e0a33e);line-height:1.45}
   .np-idle{font-size:13px;color:var(--faint)}
   .stopbtn{
     font-family:"IBM Plex Mono",monospace;font-size:11px;padding:5px 12px;
@@ -1002,8 +1003,30 @@ function paintNowPlaying(){
       '<span class="np-freq">' + Number(listenState.freq).toFixed(4) + ' MHz</span>'
       + '<span class="np-name">' + esc((listenState.mode||'').toUpperCase())
       + ' · radio ' + esc(String(listenState.device)) + ' borrowed from the rotation</span>'
-      + '<audio controls autoplay src="/listen.mp3?t=' + Date.now() + '"></audio>'
+      + '<audio id="listenaudio" controls autoplay playsinline '
+      +        'src="/listen.mp3?t=' + Date.now() + '"></audio>'
+      + '<span class="np-hint" id="listenhint" hidden></span>'
       + '<button class="stopbtn" id="stoplisten" type="button">Stop &amp; return radio</button>';
+
+    // iOS Safari refuses autoplay for unmuted audio, and this element is
+    // created after an async fetch, so the user-gesture context is already
+    // gone. The policy cannot be defeated and should not be -- but it MUST
+    // NOT fail silently: without this the player just sits there, the radio
+    // is genuinely tuned and streaming, and the page looks completely normal
+    // while the operator hears nothing. Say so instead.
+    const au = document.getElementById('listenaudio');
+    const hint = document.getElementById('listenhint');
+    if (au && hint) {
+      const play = au.play();
+      if (play && typeof play.catch === 'function') {
+        play.catch(() => {
+          hint.textContent = 'Tap \u25b6 to start \u2014 your browser blocks '
+            + 'audio that starts on its own. The radio IS tuned and streaming.';
+          hint.hidden = false;
+        });
+      }
+    }
+
     const sb = document.getElementById('stoplisten');
     if(sb) sb.addEventListener('click', async () => {
       await fetch('/api/control', {method:'POST',headers:{'Content-Type':'application/json'},

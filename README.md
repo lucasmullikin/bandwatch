@@ -107,11 +107,16 @@ Then edit three things, in this order:
    coordinate does not fail — it answers confidently about somewhere you are
    not.
 
-2. **`config/stations.json`** — your band plan. Three sets ship marked
-   `"replace_me"` (local tower, ground, military air) and `make_confs.py`
-   refuses to generate them until you edit or delete them. Everything else —
-   FRS, GMRS, MURS, both guard channels — is a national or international
-   allocation and works as shipped in the US.
+2. **`config/bandplan.json`** — what you actually record. Three sets ship
+   marked `"replace_me"` (local tower, ground, military air) and
+   `make_confs.py` refuses to generate them until you edit or delete them.
+   Everything else — FRS, GMRS, MURS, both guard channels — is a national or
+   international allocation and works as shipped in the US.
+
+   (`config/stations.json` is a separate, wider *reference* list shown in the
+   Tune panel. It records nothing. Keeping the two apart is deliberate: the
+   menu should be longer than the meal, so you can see what you are choosing
+   not to capture.)
 
 3. **`config/lanes.json`** — each dongle's **serial**. Two dongles arrive from
    the factory reporting the same one, and librtlsdr's index order is not

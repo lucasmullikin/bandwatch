@@ -139,7 +139,7 @@ Now edit config/ before starting anything:
                              coordinate answers confidently about somewhere
                              you are not.
 
-  2. config/stations.json    three sets are marked "replace_me" -- your local
+  2. config/bandplan.json    three sets are marked "replace_me" -- your local
                              tower, ground, and military air. make_confs.py
                              refuses to generate them until you edit or delete
                              them, for the same reason.

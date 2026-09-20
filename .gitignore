@@ -14,7 +14,7 @@ config/*
 !config/examples/
 !config/README.md
 
-# Generated from config/lanes.json and config/stations.json. Outputs, never
+# Generated from config/lanes.json and config/bandplan.json. Outputs, never
 # sources -- hand-edit one and the next generator run silently reverts you.
 config/conf/
 config/profiles/
