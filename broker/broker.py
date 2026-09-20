@@ -287,6 +287,22 @@ class WedgeWatch:
         return (now or time.time()) - (self.parked_at or 0) >= WEDGE_RETRY_S
 
 
+def wedge_verdict(streak_fired, radio_opens):
+    """What a streak of early exits MEANS, once the radio has been probed.
+
+    Separated from the rotation so the composition is testable: the failure
+    that matters is getting it backwards and parking a healthy radio, which
+    takes a working receiver off the air for a software fault.
+
+      "park"   the radio will not open -- hardware, only a replug clears it
+      "other"  the radio is fine, so the lanes are failing for another reason
+               (a decoder that will not start is the usual one)
+    """
+    if not streak_fired:
+        return None
+    return "other" if radio_opens else "park"
+
+
 def run_lane(dev, lane, dstate, slot=None):
     """Run one lane.
 
@@ -513,7 +529,24 @@ def device_thread(dev, spec):
                 ran = ls.get("last_run_seconds") or 0
                 early = (not lane.get("self_terminating")
                          and ran < min(15, max(3, lane["seconds"] * 0.5)))
-                if wedge.record(early=early) and not device_opens(phys):
+                fired = wedge.record(early=early)
+                verdict = wedge_verdict(fired, device_opens(phys)) if fired else None
+                if verdict == "other":
+                    # The radio is FINE and every lane is still quitting. That
+                    # is not a hardware fault and parking the device would be
+                    # wrong -- it is almost always a decoder that cannot be
+                    # found or cannot start. Measured: BANDWATCH_TOOLS pointing
+                    # at a checkout with no built decoders killed every voice
+                    # and decoder lane in ~5s while the sweeps, which use a
+                    # brew binary, carried on looking healthy.
+                    log("dev%s: %d lanes in a row quit early but the radio "
+                        "OPENS FINE -- this is not the dongle. Check the lane "
+                        "logs in %s/logs for a decoder that will not start "
+                        "(BANDWATCH_TOOLS=%s)"
+                        % (dev, wedge.streak, VAR,
+                           os.environ.get("BANDWATCH_TOOLS", "unset")))
+                    wedge.streak = 0
+                elif verdict == "park":
                     dstate["wedged"] = (
                         "radio does not open (usb claim refused). A USB reset "
                         "cannot clear a hung dongle -- it needs its power "

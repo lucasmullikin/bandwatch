@@ -144,3 +144,25 @@ def test_unparking_clears_the_streak_too():
     w.unpark()
     assert w.parked is False
     assert w.record(early=True) is False
+
+
+# ------------------------------------------------- what the streak MEANS
+
+def test_no_streak_means_no_verdict():
+    assert B.wedge_verdict(False, radio_opens=True) is None
+    assert B.wedge_verdict(False, radio_opens=False) is None
+
+
+def test_streak_plus_a_radio_that_will_not_open_is_a_park():
+    assert B.wedge_verdict(True, radio_opens=False) == "park"
+
+
+def test_streak_plus_a_HEALTHY_radio_is_not_the_dongle():
+    """The branch that must not be backwards.
+
+    Getting it the wrong way round parks a working receiver for a software
+    fault -- which is exactly what happened here: BANDWATCH_TOOLS pointed at a
+    checkout with no built decoders, every voice and decoder lane died in ~5s,
+    and the radio itself was perfectly fine the whole time.
+    """
+    assert B.wedge_verdict(True, radio_opens=True) == "other"
