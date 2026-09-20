@@ -60,7 +60,12 @@ def load_sets():
                     "bandplan.json: set %r channel %r has a non-numeric frequency %r"
                     % (name, label, freq))
             pairs.append((str(label), float(freq)))
-        out[name] = (mode, pairs, spec.get("note", ""))
+        sq = spec.get("squelch_snr")
+        if sq is not None and (isinstance(sq, bool) or not isinstance(sq, (int, float))):
+            raise C.ConfigError(
+                "bandplan.json: set %r has squelch_snr %r; expected a number of dB"
+                % (name, sq))
+        out[name] = (mode, pairs, spec.get("note", ""), sq)
     if placeholders and "--allow-placeholders" not in sys.argv:
         raise C.ConfigError(
             "these station sets are still placeholders: %s\n"
@@ -74,7 +79,7 @@ def load_sets():
     return out
 
 
-def build(name, mode, chans, note, rec_dir):
+def build(name, mode, chans, note, rec_dir, squelch=None):
     lo = min(f for _, f in chans)
     hi = max(f for _, f in chans)
     span = hi - lo
@@ -97,7 +102,11 @@ def build(name, mode, chans, note, rec_dir):
     # SNR threshold is 9.54 dB, which produced 155 airband recordings in an
     # hour, 74% of them under 2 seconds. 15 dB keeps real transmissions and
     # drops the chatter.
-    snr = 15.0 if mode == "am" else 11.0
+    # A set may override it. Some bands need a lower threshold to hear anything
+    # at all, and the alternative to saying so here is hand-editing a generated
+    # file -- which is how the profiles drifted out of their generator and why
+    # this project keeps the source and the output strictly apart.
+    snr = squelch if squelch is not None else (15.0 if mode == "am" else 11.0)
     body = []
     for label, f in sorted(chans, key=lambda x: x[1]):
         body.append(f"""    {{
@@ -150,8 +159,8 @@ def main():
     sets = load_sets()
     rec_dir = C.var("voice")
     os.makedirs(OUT, exist_ok=True)
-    for name, (mode, chans, note) in sets.items():
-        txt = build(name, mode, chans, note, rec_dir)
+    for name, (mode, chans, note, squelch) in sets.items():
+        txt = build(name, mode, chans, note, rec_dir, squelch)
         with open(os.path.join(OUT, name + ".conf"), "w") as fh:
             fh.write(txt)
         lo = min(f for _, f in chans)
