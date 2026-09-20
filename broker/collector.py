@@ -21,9 +21,30 @@ import chanmap  # noqa: E402
 VAR = os.environ.get("BANDWATCH_VAR") or os.path.join(ROOT, "var")
 DB = os.path.join(VAR, "events.db")
 OFFSETS = os.path.join(VAR, "offsets.json")
-CONFIG = os.path.join(
-    os.environ.get("BANDWATCH_CONFIG") or os.path.join(ROOT, "config"),
-    "bandwatch.json")
+CONFIG_DIR = os.environ.get("BANDWATCH_CONFIG") or os.path.join(ROOT, "config")
+CONFIG = os.path.join(CONFIG_DIR, "bandwatch.json")
+CONF_DIR = os.path.join(CONFIG_DIR, "conf")
+
+
+def lane_path(rel):
+    """Where a lane actually writes. VAR-relative, NEVER ROOT-relative.
+
+    Lane outputs are DATA, so they live under BANDWATCH_VAR. Resolving them
+    against ROOT is correct only while var/ sits inside the checkout, which is
+    every developer install and no shared one -- and the failure is silent:
+    os.path.exists() is false, the lane is skipped, and the collector ingests
+    nothing while every producer keeps writing happily. Measured: 35 minutes of
+    ADS-B written to disk and not one row read, with no error anywhere.
+
+    Accepts both "events/adsb.sbs" and the older "var/events/adsb.sbs", because
+    configs in the wild carry the prefix from when var/ was always $ROOT/var.
+    """
+    if os.path.isabs(rel):
+        return rel
+    head, _, tail = rel.partition("/")
+    if head == "var" and tail:
+        rel = tail
+    return os.path.join(VAR, rel)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS events (
@@ -336,7 +357,7 @@ def ingest_voice(con, cfg):
     # anyone remembering to mirror it into collector.json -- which nobody
     # ever did, leaving freq_mhz NULL on all 411 recorded transmissions
     # and making every frequency-keyed view silently return nothing.
-    freqs = chanmap.load(os.path.join(ROOT, "conf"))
+    freqs = chanmap.load(CONF_DIR)
     freqs.update(cfg.get("channel_freq", {}))   # explicit config still wins
     cur = con.cursor()
     added = 0
@@ -492,7 +513,7 @@ def ingest(con, cfg, offsets):
     """Read new bytes from each lane file. Returns list of new event rows."""
     new_rows = []
     for lane, spec in cfg["lanes"].items():
-        path = os.path.join(ROOT, spec["file"])
+        path = lane_path(spec["file"])
         if not os.path.exists(path):
             continue
         size = os.path.getsize(path)

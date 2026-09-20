@@ -48,6 +48,51 @@ def shell_scripts():
 RESOLVER = "bw-env.sh"
 
 
+# Python has the same trap with a different spelling. The shell scan above
+# missed os.path.join(ROOT, "var", ...) entirely, and that is where it actually
+# bit: the collector resolved every lane output against ROOT and silently read
+# nothing for 35 minutes.
+PY_BAD = re.compile(r'os\.path\.join\(\s*ROOT\s*,\s*["\']var["\']')
+PY_CONF = re.compile(r'os\.path\.join\(\s*ROOT\s*,\s*["\']conf["\']')
+
+# bandwatch_config.py and the per-module VAR fallbacks are the resolvers: the
+# `os.environ.get("BANDWATCH_VAR") or os.path.join(ROOT, "var")` line is the
+# DEFINITION of the default, which is exactly what they are for.
+PY_RESOLVER_OK = re.compile(r'environ\.get\(\s*["\']BANDWATCH_VAR["\']\s*\)\s*or')
+
+
+def python_files():
+    for dirpath, dirnames, filenames in os.walk(ROOT):
+        dirnames[:] = [d for d in dirnames
+                       if not d.startswith(".venv") and d not in ("tools", ".git")]
+        for fn in filenames:
+            if fn.endswith(".py"):
+                yield os.path.join(dirpath, fn)
+
+
+def test_no_python_module_resolves_data_against_root():
+    offenders = []
+    for p in python_files():
+        if os.path.basename(p).startswith("test_"):
+            continue
+        for n, line in enumerate(open(p, errors="replace"), 1):
+            if line.lstrip().startswith("#") or PY_RESOLVER_OK.search(line):
+                continue
+            if PY_BAD.search(line) or PY_CONF.search(line):
+                offenders.append("%s:%d  %s" % (
+                    os.path.relpath(p, ROOT), n, line.strip()))
+    assert not offenders, (
+        "data and generated config live under BANDWATCH_VAR / BANDWATCH_CONFIG, "
+        "not in the checkout:\n  " + "\n  ".join(offenders))
+
+
+def test_the_python_guard_can_see_its_own_bug():
+    assert PY_BAD.search('path = os.path.join(ROOT, "var", "events")')
+    assert PY_CONF.search('freqs = chanmap.load(os.path.join(ROOT, "conf"))')
+    assert not PY_BAD.search('VAR = os.environ.get("BANDWATCH_VAR") or os.path.join(ROOT, "var")') or \
+        PY_RESOLVER_OK.search('VAR = os.environ.get("BANDWATCH_VAR") or os.path.join(ROOT, "var")')
+
+
 def test_no_shell_script_hardcodes_root_var():
     offenders = []
     for p in shell_scripts():
