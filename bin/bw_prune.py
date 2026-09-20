@@ -4,21 +4,33 @@
 Keeps the whole project under a hard byte budget, evicting in a defined order
 so the least valuable bytes go first and nothing irreplaceable goes at all.
 
-Two limits, and the STRICTER one wins:
-  * budget_gb        -- total project footprint
-  * min_free_gb      -- free space that must remain on the volume. The Mini has
-                        ~48 GB free, so a 50 GB budget alone would happily fill
-                        the disk. A budget bigger than the disk is not a budget.
+Two limits, and they are answered DIFFERENTLY:
+
+  * budget_gb    -- our own footprint. Exceeding it is ours to fix, and the way
+                    to fix it is to delete our own data.
+  * min_free_gb  -- free space that must remain on the volume. A budget bigger
+                    than the disk is not a budget, so this has to exist. But on
+                    a shared disk it is usually somebody else's doing, and then
+                    deleting our data does not free the space -- it just costs
+                    us the data too. So volume pressure buys the cheap bytes and
+                    raises an alarm; it does not reach the recordings.
+
+These used to be collapsed with max(). On a real station another project filled
+the volume and bandwatch answered by deleting 1,068,613 of its own event rows
+over six hours to free 16 MB, against a 14-day retention. Two days survived.
 
 NEVER evicted: preserved recordings and events (they are the copy of record),
-models/, tools/, .git/, and any code or config. Those are either irreplaceable
-or a re-download, and neither is the thing that grows.
+anything inside the retention window, models/, tools/, .git/, and any code or
+config. Those are either irreplaceable or a re-download, and neither is the
+thing that grows.
 
 Eviction order, cheapest regret first:
   1. var/voice/rejected/   -- clips the ingest gate already judged worthless
   2. rotated/oversized logs
+  -- volume-only pressure stops here --
   3. non-preserved audio, oldest first
-  4. non-preserved event rows, oldest first (then VACUUM)
+  4. non-preserved event rows outside retention, oldest first (then VACUUM),
+     measuring what each block actually freed rather than estimating it
 """
 import argparse
 import json
@@ -27,7 +39,7 @@ import shutil
 import sqlite3
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 VAR = os.environ.get("BANDWATCH_VAR") or os.path.join(ROOT, "var")
@@ -110,11 +122,39 @@ def budget_sanity(c):
 
 
 def over_by(c):
-    """How many bytes must go. The stricter of the two limits wins."""
+    """The two pressures, kept APART, and the footprint they were measured on.
+
+    These used to be collapsed with max() on the reasoning that the stricter
+    limit should win. They are not the same kind of fact. Exceeding our budget
+    is ours to fix by deleting our data; a volume running out of free space on
+    a shared disk usually is not, and the max() meant another project filling
+    the Mini read here as "bandwatch must delete eleven days of events".
+    """
     _, total = footprint()
-    need_budget = total - c["budget_gb"] * 1024 ** 3
-    need_free = c["min_free_gb"] * 1024 ** 3 - free_bytes()
-    return max(need_budget, need_free, 0), total
+    need_budget = max(total - c["budget_gb"] * 1024 ** 3, 0)
+    need_volume = max(c["min_free_gb"] * 1024 ** 3 - free_bytes(), 0)
+    return need_budget, need_volume, total
+
+
+# How many event rows to delete between measurements. Small enough that a run
+# cannot overshoot by much, large enough that the VACUUM cost is amortised.
+EVICT_BLOCK = 5000
+
+# Only used when a caller does not pass one. The collector owns the real value;
+# this exists so a direct run of this tool cannot default to "no floor at all",
+# which is what the absence of a floor amounted to before.
+RETENTION_DEFAULT = 14
+
+
+def db_bytes():
+    """Size of the event store, including its WAL -- the number VACUUM moves."""
+    total = 0
+    for suffix in ("", "-wal", "-shm"):
+        try:
+            total += os.path.getsize(DB + suffix)
+        except OSError:
+            pass
+    return total
 
 
 def preserved_paths(con):
@@ -123,10 +163,30 @@ def preserved_paths(con):
         "AND audio_path IS NOT NULL")}
 
 
-def plan(need, apply=False):
-    """Return the eviction steps, executing them when apply=True."""
+def plan(need_budget, need_volume=0, retention_days=None, apply=False):
+    """Return the eviction steps, executing them when apply=True.
+
+    TWO pressures, and they are not interchangeable:
+
+      need_budget   our own footprint exceeds our own budget. Ours to fix, and
+                    evicting our data is the way to fix it.
+      need_volume   the VOLUME is short of free space. On a shared disk this is
+                    usually somebody else's doing, and deleting our data does
+                    not fix it -- it just costs us the data as well.
+
+    Conflating them cost a real station eleven days of its event history: the
+    Mini's disk filled, and because the stricter limit won, bandwatch spent six
+    hours deleting its own events -- 1,068,613 rows to free 16 MB -- against a
+    target that was never its to reach. So volume pressure buys only the cheap
+    bytes (steps 1 and 2) and then says plainly whose problem it is.
+
+    retention_days is a FLOOR. Nothing inside the window is evicted at any
+    pressure; if that means the target cannot be reached, the target cannot be
+    reached, and the honest thing is to report it rather than keep deleting.
+    """
     freed = 0
     steps = []
+    need = max(need_budget, need_volume, 0)
     con = sqlite3.connect(DB) if os.path.exists(DB) else None
     keep = preserved_paths(con) if con else set()
 
@@ -170,6 +230,22 @@ def plan(need, apply=False):
                 freed += sz - cap // 2
                 steps.append(("truncated %s" % f, 1, freed))
 
+    # Everything below deletes RECORDED DATA rather than waste. That is only
+    # ever justified by our own budget: if the volume is short but we are inside
+    # our budget, our bytes are not the problem and deleting them would not fix
+    # it. Report it instead -- a disk filling up is worth an alert, and this is
+    # the only process in a position to raise one.
+    if freed < need and need_budget <= freed:
+        short = gb(need_volume - freed)
+        steps.append((
+            "DISK PRESSURE IS NOT OURS -- refusing to evict recordings or events;"
+            " the volume is %.2f GB short while bandwatch is inside its own"
+            " budget. Deleting our data would not free the space someone else is"
+            " using." % short, 0, freed))
+        if con:
+            con.close()
+        return steps, freed
+
     # 3. non-preserved audio, oldest first
     if con and freed < need:
         rows = list(con.execute(
@@ -196,22 +272,52 @@ def plan(need, apply=False):
                 con.commit()
             steps.append(("non-preserved recordings", n, freed))
 
-    # 4. non-preserved event rows, oldest first
+    # 4. non-preserved event rows OUTSIDE the retention window, oldest first.
+    #
+    # The window is the floor. Previously there was none: an event row was just
+    # the last thing left to delete, so a target the pruner could not reach ate
+    # the whole table regardless of the retention the operator had configured.
     if con and freed < need:
-        remaining = need - freed
-        # rows are ~400 bytes each in practice; delete in blocks and re-measure
-        total_rows = con.execute(
-            "SELECT COUNT(*) FROM events WHERE COALESCE(preserved,0)=0").fetchone()[0]
-        est = min(total_rows, max(1000, int(remaining / 400)))
-        if est and apply:
-            ids = [r[0] for r in con.execute(
-                "SELECT id FROM events WHERE COALESCE(preserved,0)=0 "
-                "ORDER BY ts ASC LIMIT ?", (est,))]
-            con.executemany("DELETE FROM events WHERE id=?", [(i,) for i in ids])
-            con.commit()
-            con.execute("VACUUM")
-        if est:
-            steps.append(("oldest event rows", est, freed))
+        days = RETENTION_DEFAULT if retention_days is None else retention_days
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        evictable = con.execute(
+            "SELECT COUNT(*) FROM events WHERE COALESCE(preserved,0)=0 AND ts < ?",
+            (cutoff,)).fetchone()[0]
+        if evictable:
+            before = db_bytes()
+            freed_so_far = freed
+            deleted = 0
+            # Delete in blocks and MEASURE, rather than estimating from a
+            # bytes-per-row constant and reporting the estimate. The old code
+            # carried the constant, never re-measured, and so reported "freed
+            # 0.000 GB" after deleting a million rows -- which left the next
+            # hourly run facing the same shortfall and doing it again.
+            while deleted < evictable and freed < need:
+                ids = [r[0] for r in con.execute(
+                    "SELECT id FROM events WHERE COALESCE(preserved,0)=0 "
+                    "AND ts < ? ORDER BY ts ASC LIMIT ?", (cutoff, EVICT_BLOCK))]
+                if not ids:
+                    break
+                if apply:
+                    con.executemany("DELETE FROM events WHERE id=?",
+                                    [(i,) for i in ids])
+                    con.commit()
+                    con.execute("VACUUM")          # pages go back to the OS
+                deleted += len(ids)
+                if apply:
+                    freed = freed_so_far + (before - db_bytes())
+                else:
+                    break                          # nothing shrank; do not spin
+            if deleted:
+                steps.append(("oldest event rows outside retention", deleted, freed))
+        remaining_short = need - freed
+        if remaining_short > 0:
+            steps.append((
+                "STILL %.2f GB SHORT and nothing else may go: everything left is"
+                " inside the %d-day retention window or preserved. Raise the"
+                " budget, lower retention_days, or move the data -- the pruner"
+                " will not delete inside the window to hit a number."
+                % (gb(remaining_short), days), 0, freed))
     if con:
         con.close()
     return steps, freed
@@ -265,14 +371,18 @@ def main():
     a = ap.parse_args()
     c = cfg()
     parts, total = footprint()
-    need, _ = over_by(c)
+    need_budget, need_volume, _ = over_by(c)
+    need = max(need_budget, need_volume)
 
     if a.json:
         print(json.dumps({"config_error": budget_sanity(c),
                           "total_bytes": total, "budget_gb": c["budget_gb"],
                           "free_gb": round(gb(free_bytes()), 2),
                           "min_free_gb": c["min_free_gb"],
-                          "over_by_bytes": int(need), "parts": parts}))
+                          "over_by_bytes": int(need),
+                          "over_budget_bytes": int(need_budget),
+                          "volume_short_bytes": int(need_volume),
+                          "parts": parts}))
         return 0
 
     msg = prune_presence(apply=a.apply)
@@ -296,8 +406,13 @@ def main():
     if need <= 0:
         print("  STATUS      : within budget, nothing to evict")
         return 0
-    print("  OVER BY     : %.3f GB" % gb(need))
-    steps, freed = plan(need, apply=a.apply)
+    if need_budget > 0:
+        print("  OVER BUDGET : %.3f GB   (ours to fix)" % gb(need_budget))
+    if need_volume > 0:
+        print("  VOLUME SHORT: %.3f GB   (the whole disk, not just us)"
+              % gb(need_volume))
+    steps, freed = plan(need_budget, need_volume,
+                        retention_days=c.get("retention_days"), apply=a.apply)
     verb = "evicted" if a.apply else "WOULD evict"
     for what, n, _ in steps:
         print("  %s: %s x%d" % (verb, what, n))

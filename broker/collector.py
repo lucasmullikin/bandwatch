@@ -1158,6 +1158,14 @@ def prune(con, cfg):
     cur.execute("DELETE FROM events WHERE ts < ? AND COALESCE(preserved,0)=0", (cutoff,))
     n = cur.rowcount
     cur.execute("DELETE FROM alerts WHERE ts < ?", (cutoff,))
+    # aircraft_positions had NO retention at all and was the largest thing in
+    # the database by a wide margin -- on one station 990,507 rows, 100 MB of a
+    # 137 MB file once its indexes are counted, against 1 MB of events. So the
+    # only table growing without limit was the one nothing could evict, while
+    # the disk pruner ate the table that did have a retention and could never
+    # reach its target. One position row is a fix on an aircraft; the event row
+    # and the track built from it are the durable record.
+    cur.execute("DELETE FROM aircraft_positions WHERE ts < ?", (cutoff,))
     vcut = (datetime.now(timezone.utc)
             - timedelta(days=cfg.get("audio_retention_days", 7))).isoformat()
     for (vid, path) in list(cur.execute(
