@@ -174,6 +174,33 @@ Withheld-by-policy, delivered, and failed are three distinct states. Collapsing
 the first two into one makes an undelivered backlog that grows forever and
 means nothing.
 
+## Who can reach the console
+
+The console can start and stop the pipeline, take a radio out of the rotation
+and retune it, silence alerting, and exempt recordings from the retention
+sweep. So:
+
+- **It binds `127.0.0.1` by default** — this machine only. To reach it from
+  another device, tunnel rather than expose it:
+  `ssh -L 9111:127.0.0.1:9111 <host>`
+- **Reading is never gated.** A console you cannot look at is not a console.
+- **Changing anything requires `ui_password`** whenever one is set.
+- **bandwatch refuses to start** bound off-loopback with no password, rather
+  than warning about it in a log nobody reads.
+
+The **Settings** tab reports the current posture and how to change it. It
+deliberately cannot change it itself: a console that can unlock itself is not
+an access control, and a bind address can only take effect at startup.
+
+A password over plain HTTP stops a casual visitor on your network. It does not
+hide anything from someone who can watch the traffic — loopback plus a tunnel
+is the stronger arrangement, and the Settings tab says so rather than implying
+otherwise.
+
+Transcription workers authenticate separately, with a token generated on first
+use and stored `0600` outside git — `/api/transcript` rewrites the record of
+what a transmission said, so it was never left open.
+
 ## Transcription
 
 Optional, off by default, and the one part of this system capable of inventing

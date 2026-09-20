@@ -45,6 +45,12 @@
   "no_notify_rules": [],
   "_no_notify_note": "Rules listed here are still RECORDED and still shown in the console; only the push is withheld. Withheld is a DISTINCT state from undelivered -- conflating them makes a backlog that grows forever and means nothing. A station near a busy airport probably wants low_aircraft and notable_aircraft in here.",
 
+  "ui_bind": "127.0.0.1",
+  "_ui_bind_note": "Which address the console listens on. 127.0.0.1 means this machine only, which is the right default: the console can start and stop the pipeline, take a radio out of the rotation and retune it, and silence alerting. To reach it from another device, tunnel rather than expose it -- ssh -L 9111:127.0.0.1:9111 <host>. Set it to 0.0.0.0 to listen on your network; bandwatch then REFUSES to start unless ui_password is also set.",
+
+  "ui_password": "",
+  "_ui_password_note": "Required to CHANGE anything from the console when set; reading is never gated, because a console you cannot look at is not a console. Empty is only allowed while ui_bind is loopback. Note the console speaks plain HTTP: a password stops a casual visitor on your network, it does not hide traffic from anyone watching it. Loopback plus an SSH tunnel is the stronger arrangement.",
+
   "mqtt_host": "127.0.0.1",
   "mqtt_port": 1883,
 

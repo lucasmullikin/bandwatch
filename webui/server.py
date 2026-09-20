@@ -175,6 +175,87 @@ def token_ok(supplied):
     return hmac.compare_digest(str(supplied), worker_token())
 
 
+LOOPBACK = ("127.0.0.1", "::1", "localhost")
+
+
+def ui_bind():
+    """The address the console listens on. Loopback unless deliberately changed.
+
+    Default 127.0.0.1, which is the whole point: the console can start, stop
+    and retune radios, and until now it bound 0.0.0.0 with no authentication
+    at all -- anyone on the network could take a dongle off the rotation or
+    silence alerting, and nothing about the console would look wrong.
+    """
+    return str(read_config().get("ui_bind") or "127.0.0.1").strip()
+
+
+def ui_password():
+    """Shared password for the control endpoints. Empty means none is set."""
+    return str(read_config().get("ui_password") or "")
+
+
+def exposed():
+    """True when the console is reachable from beyond this machine."""
+    return ui_bind() not in LOOPBACK
+
+
+def console_auth_required():
+    """Whether a caller must present a password to CHANGE anything.
+
+    Reading is never gated: a console you cannot look at is not a console.
+    Mutating is gated whenever a password is set, and a password is mandatory
+    before the console may listen off-loopback (enforced at startup).
+    """
+    return bool(ui_password())
+
+
+def console_ok(supplied):
+    """Constant-time compare against the console password."""
+    if not console_auth_required():
+        return True
+    if not supplied:
+        return False
+    return hmac.compare_digest(str(supplied), ui_password())
+
+
+def security_state():
+    """What the Settings panel reports. Facts only -- no reassurance.
+
+    Deliberately describes the posture rather than scoring it: 'open to your
+    network' is a choice some people should make, and a green tick would
+    encourage nobody to think about it.
+    """
+    bind = ui_bind()
+    return {
+        "bind": bind,
+        "port": PORT,
+        "exposed": exposed(),
+        # 0.0.0.0 is a bind wildcard, not somewhere anyone can point a
+        # browser, so it must not be echoed back as if it were an address.
+        "reach": ("this machine only" if not exposed()
+                  else "any device on your network, on port %d" % PORT
+                  if bind in ("0.0.0.0", "::", "*")
+                  else "any device that can reach %s:%d" % (bind, PORT)),
+        "password_set": console_auth_required(),
+        "control_protected": console_auth_required(),
+        "worker_token_present": bool(_worker_token_exists()),
+        "transport": "http",
+        "plaintext_warning": (
+            "The console speaks plain HTTP. A password stops a casual visitor "
+            "from changing settings; it does not hide anything from someone "
+            "who can watch the traffic. Binding to loopback is the stronger "
+            "control, and an SSH tunnel is the right way in from elsewhere."),
+    }
+
+
+def _worker_token_exists():
+    try:
+        with io.open(TOKEN_PATH, encoding="utf-8") as fh:
+            return bool(fh.read().strip())
+    except OSError:
+        return False
+
+
 def read_config():
     try:
         return json.load(open(CONFIG_FILE))
@@ -268,6 +349,9 @@ def controls():
         "listen": listen_state(),
         "preserved": preserved_counts(),
         "watchdog": watchdog_state(),
+        "security": security_state(),
+        "audio_retention_days": cfg.get("audio_retention_days"),
+        "retention_days": cfg.get("retention_days"),
     }
 
 
@@ -1104,6 +1188,22 @@ class Handler(BaseHTTPRequestHandler):
             body = json.loads(self.rfile.read(n) or b"{}")
         except Exception:
             return self._send(400, json.dumps({"error": "bad json"}))
+
+        # Everything below this line CHANGES something: starts and stops the
+        # pipeline, takes a radio out of the rotation and retunes it, silences
+        # alerting, or exempts a recording from the retention sweep. Reading is
+        # never gated; changing is, whenever a console password is set.
+        #
+        # /api/transcript keeps its own worker token instead -- a transcription
+        # worker is a machine on another host, not a person at a browser.
+        if route != "/api/transcript" and console_auth_required():
+            supplied = (self.headers.get("X-Console-Password")
+                        or body.get("console_password"))
+            if not console_ok(supplied):
+                return self._send(401, json.dumps({
+                    "error": "console password required",
+                    "hint": "Settings tab, or ui_password in bandwatch.json"}))
+
         if route == "/api/preserve":
             try:
                 rid = int(body.get("id"))
@@ -1481,6 +1581,43 @@ def _init_spectrum():
 if __name__ == "__main__":
     os.makedirs(VOICE_DIR, exist_ok=True)
     ensure_store()
-    srv = Server(("0.0.0.0", PORT), Handler)
-    print("bandwatch UI on http://0.0.0.0:%d" % PORT, flush=True)
+
+    bind = ui_bind()
+
+    # An off-loopback console with no password is not a configuration anyone
+    # should be able to reach by accident, so it is refused rather than warned
+    # about. The console can stop the pipeline and retune a radio; reachable
+    # from the network and unauthenticated, any device on it can do the same,
+    # and nothing about the console would look wrong afterwards.
+    #
+    # Refusing at startup rather than logging a warning is deliberate: a
+    # warning in a log nobody reads is how this stays broken.
+    if bind not in LOOPBACK and not console_auth_required():
+        raise SystemExit(
+            "bandwatch: refusing to start.\n"
+            "  ui_bind is %r, so the console would be reachable from your\n"
+            "  network -- and ui_password is empty, so anyone reaching it\n"
+            "  could stop the pipeline, retune a radio off the rotation, or\n"
+            "  silence alerting. Nothing about the console would look wrong.\n"
+            "\n"
+            "  Pick one, in %s:\n"
+            "    \"ui_bind\": \"127.0.0.1\"      this machine only (recommended;\n"
+            "                                  reach it from elsewhere with\n"
+            "                                  ssh -L %d:127.0.0.1:%d <host>)\n"
+            "    \"ui_password\": \"...\"        keep it on the network, behind a\n"
+            "                                  password. Note the console speaks\n"
+            "                                  plain HTTP: this stops a casual\n"
+            "                                  visitor, not someone watching the\n"
+            "                                  traffic."
+            % (bind, CONFIG_FILE, PORT, PORT))
+
+    srv = Server((bind, PORT), Handler)
+    where = "http://%s:%d" % ("127.0.0.1" if bind in LOOPBACK else bind, PORT)
+    print("bandwatch UI on %s" % where, flush=True)
+    if bind in LOOPBACK:
+        print("  this machine only. To reach it from another device:\n"
+              "      ssh -L %d:127.0.0.1:%d <this-host>" % (PORT, PORT), flush=True)
+    else:
+        print("  reachable from your network, password required to change "
+              "anything.", flush=True)
     srv.serve_forever()

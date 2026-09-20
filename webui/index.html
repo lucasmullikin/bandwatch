@@ -112,6 +112,23 @@
     border-radius:4px;border-left:2px solid var(--live);
     overflow-wrap:anywhere;
   }
+    .setcard{border:1px solid var(--line,#26282c);border-radius:10px;padding:16px 18px;margin:0 0 14px}
+  .setcard.warn{border-color:var(--warn,#e0a33e)}
+  .setcard h3{margin:0 0 12px;font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim,#8b8b8b);font-weight:600}
+  .setrow{display:grid;grid-template-columns:minmax(120px,190px) 1fr;gap:6px 16px;padding:9px 0;border-top:1px solid var(--line,#26282c)}
+  .setrow:first-of-type{border-top:0}
+  .setk{color:var(--dim,#8b8b8b);font-size:12px}
+  .setv{font-size:13px}
+  .setnote{grid-column:1/-1;font-size:12px;color:var(--dim,#8b8b8b);line-height:1.5}
+  .setp{margin:0 0 10px;font-size:13px;line-height:1.6}
+  .setpre{background:var(--bg2,#17181b);border:1px solid var(--line,#26282c);border-radius:7px;padding:11px 13px;font-size:12px;overflow-x:auto;margin:0 0 10px;white-space:pre}
+  .spill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:11px;
+         letter-spacing:.04em;white-space:nowrap}
+  .spill-on{background:rgba(93,188,120,.16);color:#5dbc78}
+  .spill-warn{background:rgba(224,163,62,.16);color:#e0a33e}
+  .spill-neutral{background:rgba(139,139,139,.14);color:#9a9a9a}
+  @media (max-width:520px){ .setrow{grid-template-columns:1fr} }
+  .audio-gone{margin:6px 0 2px;font-size:12px;color:var(--dim,#8b8b8b);line-height:1.45;font-style:italic}
   .transcript.pending{color:var(--faint);font-style:italic;border-left-color:var(--line)}
   audio{width:100%;max-width:420px;margin-top:8px;height:32px}
   .keep{
@@ -578,6 +595,7 @@
     <button class="tab" id="tab-lanes" role="tab" aria-selected="false">Lanes</button>
     <button class="tab" id="tab-env" role="tab" aria-selected="false">Environment</button>
     <button class="tab" id="tab-tune" role="tab" aria-selected="false">Tune</button>
+    <button class="tab" id="tab-set" role="tab" aria-selected="false">Settings</button>
   </div>
 
   <div class="bar" role="group" aria-label="Filter feed">
@@ -636,6 +654,11 @@
     <div class="nowplaying" id="nowplaying"></div>
     <div id="stations"></div>
   </div>
+  <div class="hidden" id="setpanel">
+    <div class="panelhead"><span class="note" id="setstat"></span></div>
+    <div id="settings"></div>
+  </div>
+
   <div class="hidden" id="vehpanel">
     <div class="panelhead"><span class="note" id="vehstat"></span></div>
     <div id="vehicles"></div>
@@ -729,6 +752,39 @@ function clock(ts){
                   : d.toLocaleTimeString([], {hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:false});
 }
 
+// A clip whose audio has aged out is the NORMAL case, not a failure: audio is
+// kept for audio_retention_days and the row for retention_days, and the
+// default is 7 against 14, so rows routinely outlive their audio by a week.
+// Left alone the browser renders a dead player with an unexplained error,
+// which reads as broken software.
+//
+// The name is remembered rather than just swapping the node: the feed polls
+// and re-renders, so a DOM-only fix flashes the explanation and then restores
+// the dead player on the next refresh. Ask voiceRow() to render it correctly
+// from then on instead.
+const AUDIO_GONE = new Set();
+const AUDIO_GONE_TEXT = 'Audio is no longer on disk \u2014 clips are kept for '
+  + 'audio_retention_days, the record for longer. The transcript and metadata '
+  + 'above are unaffected.';
+
+function audioGoneHTML(){
+  return '<p class="audio-gone">' + AUDIO_GONE_TEXT + '</p>';
+}
+
+// error does not bubble, so listen in the capture phase.
+document.addEventListener('error', function (e) {
+  const el = e.target;
+  if (!el || el.tagName !== 'AUDIO' || !el.classList.contains('clip')) return;
+  const name = el.dataset.audio;
+  if (name) AUDIO_GONE.add(name);
+  if (el.dataset.explained) return;
+  el.dataset.explained = '1';
+  const note = document.createElement('p');
+  note.className = 'audio-gone';
+  note.textContent = AUDIO_GONE_TEXT;
+  el.replaceWith(note);
+}, true);
+
 function voiceRow(it){
   const hit = it.hit ? ' hot' : '';
   const tag = it.hit ? '<span class="tag t-hit">Watchlist</span>'
@@ -736,9 +792,11 @@ function voiceRow(it){
   const tr = it.transcript
     ? '<p class="transcript">' + esc(it.transcript) + '</p>'
     : '<p class="transcript pending">awaiting transcription…</p>';
-  const audio = it.audio
-    ? '<audio controls preload="none" src="/audio/' + encodeURIComponent(it.audio) + '"></audio>'
-    : '';
+  const audio = !it.audio ? ''
+    : AUDIO_GONE.has(it.audio) ? audioGoneHTML()
+    : '<audio class="clip" controls preload="none" playsinline '
+      + 'data-audio="' + esc(it.audio) + '" '
+      + 'src="/audio/' + encodeURIComponent(it.audio) + '"></audio>';
   const dur = it.duration ? Number(it.duration).toFixed(1) + ' s' : '';
   const keep = '<button class="keep" data-vid="' + it.id + '" type="button" aria-pressed="'
     + (it.preserved ? 'true' : 'false') + '" title="Exempt from the retention sweep and hash it">'
@@ -808,9 +866,8 @@ async function load(){
       b.setAttribute('aria-pressed', String(on));
       b.textContent = on ? 'kept' : 'keep';
       try {
-        await fetch('/api/preserve', {method:'POST',
-          headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({kind:'voice', id:Number(b.dataset.vid), preserve:on})});
+        await apiPost('/api/preserve',
+          {kind:'voice', id:Number(b.dataset.vid), preserve:on});
         load();
       } catch(e){ b.setAttribute('aria-pressed', String(!on)); }
     });
@@ -845,9 +902,8 @@ function paintModes(c){
     b.addEventListener('click', async () => {
       document.getElementById('sched-note').textContent = 'switching to ' + b.dataset.p + '…';
       try {
-        const r = await fetch('/api/control', {method:'POST',
-          headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({action:'profile', profile:b.dataset.p})});
+        const r = await apiPost('/api/control',
+          {action:'profile', profile:b.dataset.p});
         paintControls((await r.json()).controls);
       } catch(e){ document.getElementById('sched-note').textContent = 'Could not reach the server.'; }
       setTimeout(load, 6000);
@@ -893,8 +949,12 @@ function paintWatchdog(w){
     + (stale ? ' \u2014 OVERDUE' : '') + ' \u00b7 ' + found;
 }
 
+let lastControls = null;
+
 function paintControls(c){
   if(!c) return;
+  lastControls = c;
+  if (view === 'set') loadSettings();
   paintModes(c);
   paintWatchdog(c.watchdog);
   if(c.listen){ listenState = c.listen; if(view==='tune'){ paintNowPlaying(); paintStations(); } }
@@ -914,11 +974,7 @@ for(const [id, spec] of Object.entries(CTL)){
     document.getElementById('ctl-note').textContent =
       isOn ? spec.note : 'Enabled.';
     try {
-      const r = await fetch('/api/control', {
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({action})
-      });
+      const r = await apiPost('/api/control', {action});
       const d = await r.json();
       paintControls(d.controls);
     } catch(e){
@@ -992,6 +1048,132 @@ async function loadDevices(){
   });
 }
 
+// ---- settings ----
+//
+// This panel REPORTS the security posture and tells you how to change it. It
+// deliberately cannot change it itself: a console that can unlock itself is
+// not an access control, and the setting that matters most -- which address
+// the server binds -- can only take effect when the server starts. Editing it
+// from a page served by that same server, possibly over the network you are
+// trying to close off, is exactly the wrong shape.
+
+const CONSOLE_PW_KEY = 'bandwatch.console_password';
+
+function consolePassword(){
+  try { return sessionStorage.getItem(CONSOLE_PW_KEY) || ''; }
+  catch (e) { return window.__pw || ''; }        // private mode, or storage off
+}
+
+function setConsolePassword(v){
+  try { sessionStorage.setItem(CONSOLE_PW_KEY, v); }
+  catch (e) { window.__pw = v; }
+}
+
+// Every mutating call goes through this, so a 401 is handled once rather than
+// at each call site -- and so a wrong password is SAID, not swallowed.
+async function apiPost(path, payload){
+  const send = async () => fetch(path, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json',
+              'X-Console-Password': consolePassword()},
+    body: JSON.stringify(payload || {})
+  });
+  let r = await send();
+  if (r.status === 401) {
+    const pw = window.prompt(
+      'This console requires a password to change anything.\n' +
+      'Reading is not restricted; starting, stopping and retuning are.');
+    if (pw === null) return r;
+    setConsolePassword(pw);
+    r = await send();
+    if (r.status === 401) {
+      alert('That password was not accepted. It is ui_password in your '
+          + 'bandwatch.json.');
+    }
+  }
+  return r;
+}
+
+function loadSettings(){
+  const box = document.getElementById('settings');
+  const stat = document.getElementById('setstat');
+  if (!box) return;
+  const c = lastControls || {};
+  const sec = c.security;
+  if (!sec) {
+    stat.textContent = '';
+    box.innerHTML = '<div class="empty">Security state unavailable — the '
+      + 'server may be an older version than this page.</div>';
+    return;
+  }
+
+  stat.textContent = sec.exposed
+    ? 'Reachable from your network.'
+    : 'Reachable from this machine only.';
+
+  const row = (label, value, note) =>
+    '<div class="setrow"><div class="setk">' + esc(label) + '</div>'
+    + '<div class="setv">' + value + '</div>'
+    + (note ? '<div class="setnote">' + note + '</div>' : '') + '</div>';
+
+  // Three states, not two. An ungenerated worker token is not a problem --
+  // it is created the first time a worker connects -- and colouring it amber
+  // would train you to ignore the colour that does mean something.
+  const yes  = t => '<span class="spill spill-on">' + esc(t) + '</span>';
+  const warn = t => '<span class="spill spill-warn">' + esc(t) + '</span>';
+  const meh  = t => '<span class="spill spill-neutral">' + esc(t) + '</span>';
+
+  let html = '<div class="setcard"><h3>Who can reach this console</h3>';
+  html += row('Listening on',
+              '<code>' + esc(sec.bind) + ':' + esc(String(sec.port)) + '</code>',
+              esc(sec.reach));
+  html += row('Changing settings',
+              sec.control_protected ? yes('password required')
+              : sec.exposed ? warn('no password')
+              : meh('no password — not needed on loopback'),
+              sec.control_protected
+                ? 'Starting, stopping, retuning and retention changes need the password. Reading is open.'
+                : 'Anything that can reach this console can start and stop the pipeline, take a radio off the rotation and retune it, and silence alerting.');
+  html += row('Worker token',
+              sec.worker_token_present ? yes('set')
+                                       : meh('not yet generated'),
+              'Separate secret for transcription workers posting back a transcript. Generated on first use, stored 0600 outside git.');
+  html += '</div>';
+
+  html += '<div class="setcard"><h3>Changing it</h3>'
+       +  '<p class="setp">These live in <code>bandwatch.json</code> in your '
+       +  'config directory, and take effect when the console restarts. This '
+       +  'page will not edit them: a console that can unlock itself is not an '
+       +  'access control, and a bind address can only change at startup.</p>'
+       +  '<pre class="setpre">'
+       +  '"ui_bind": "127.0.0.1",   this machine only (recommended)\n'
+       +  '"ui_bind": "0.0.0.0",     your whole network — needs a password\n'
+       +  '"ui_password": ""         empty is allowed only on loopback'
+       +  '</pre>'
+       +  '<p class="setp">bandwatch <strong>refuses to start</strong> bound '
+       +  'off-loopback with no password, rather than warning about it in a log '
+       +  'nobody reads.</p>'
+       +  '<p class="setp">To reach a loopback console from another device, '
+       +  'tunnel instead of exposing it:</p>'
+       +  '<pre class="setpre">ssh -L ' + esc(String(sec.port)) + ':127.0.0.1:'
+       +  esc(String(sec.port)) + ' &lt;this-host&gt;</pre>'
+       +  '</div>';
+
+  html += '<div class="setcard warn"><h3>What a password here does not do</h3>'
+       +  '<p class="setp">' + esc(sec.plaintext_warning) + '</p></div>';
+
+  html += '<div class="setcard"><h3>Retention</h3>'
+       +  row('Recordings kept',
+              esc(String(c.audio_retention_days == null ? '—' : c.audio_retention_days)) + ' days',
+              'Audio is deleted first; a clip older than this is gone even though its row remains.')
+       +  row('Records kept',
+              esc(String(c.retention_days == null ? '—' : c.retention_days)) + ' days',
+              'Transcripts, decodes and metadata. Anything you mark <em>keep</em> is exempt and hashed.')
+       +  '</div>';
+
+  box.innerHTML = html;
+}
+
 // ---- tune ----
 let stationsCache = null, listenState = {listening:false};
 
@@ -1029,8 +1211,7 @@ function paintNowPlaying(){
 
     const sb = document.getElementById('stoplisten');
     if(sb) sb.addEventListener('click', async () => {
-      await fetch('/api/control', {method:'POST',headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({action:'listen_stop'})});
+      await apiPost('/api/control', {action:'listen_stop'});
       listenState = {listening:false}; paintNowPlaying(); paintStations();
     });
   } else {
@@ -1049,9 +1230,8 @@ async function tuneTo(freq, mode, name){
   document.getElementById('nowplaying').innerHTML =
     '<span class="np-idle">tuning ' + Number(freq).toFixed(4) + ' MHz…</span>';
   try {
-    const r = await fetch('/api/listen', {method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({freq:freq, mode:mode, device:radioFor(freq)})});
+    const r = await apiPost('/api/listen',
+      {freq:freq, mode:mode, device:radioFor(freq)});
     const d = await r.json();
     if(d.error){ document.getElementById('nowplaying').innerHTML =
       '<span class="np-idle">' + esc(d.error) + '</span>'; return; }
@@ -1174,7 +1354,7 @@ async function loadStations(force){
 
 function setView(v){
   view = v;
-  ['feed','sensors','map','patterns','veh','img','lanes','env','tune'].forEach(t =>
+  ['feed','sensors','map','patterns','veh','img','lanes','env','tune','set'].forEach(t =>
     document.getElementById('tab-'+t).setAttribute('aria-selected', String(v===t)));
   document.querySelector('.bar').classList.toggle('hidden', v!=='feed');
   document.getElementById('devbar').classList.toggle('hidden', v!=='sensors');
@@ -1187,6 +1367,7 @@ function setView(v){
   document.getElementById('imgpanel').classList.toggle('hidden', v!=='img');
   document.getElementById('lanepanel').classList.toggle('hidden', v!=='lanes');
   document.getElementById('vehpanel').classList.toggle('hidden', v!=='veh');
+  document.getElementById('setpanel').classList.toggle('hidden', v!=='set');
   if(v==='sensors') loadDevices();
   else if(v==='map') loadTracks();
   else if(v==='patterns') loadPatterns();
@@ -1195,9 +1376,11 @@ function setView(v){
   else if(v==='lanes') loadLanes();
   else if(v==='veh') loadVehicles();
   else if(v==='tune') loadStations();
+  else if(v==='set') loadSettings();
   else load();
 }
 document.getElementById('tab-tune').addEventListener('click', () => setView('tune'));
+document.getElementById('tab-set').addEventListener('click', () => setView('set'));
 document.getElementById('tab-map').addEventListener('click', () => setView('map'));
 document.getElementById('tab-patterns').addEventListener('click', () => setView('patterns'));
 document.getElementById('tab-env').addEventListener('click', () => setView('env'));
