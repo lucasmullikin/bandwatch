@@ -18,7 +18,7 @@ PROFILE="${BANDWATCH_PROFILE:-watch-day}"
 LOG="$VAR/logs/supervise.log"
 INTERVAL=30
 
-mkdir -p "$ROOT/var/logs"
+mkdir -p "$VAR/logs"
 say(){ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  $*" >> "$LOG"; }
 
 # The profile to restore is NOT the env default. Precedence:
@@ -30,7 +30,7 @@ desired_profile(){
   local w c
   w="$("$ROOT/bin/schedule_check.py" --want 2>/dev/null)"
   if [ -n "$w" ] && [ -f "$PROFILE_DIR/$w.json" ]; then echo "$w"; return; fi
-  c="$(python3 -c "import json;print(json.load(open('"'"'$ROOT/var/state.json'"'"')).get('"'"'profile'"'"') or '"'"''"'"')" 2>/dev/null)"
+  c="$(python3 -c "import json;print(json.load(open('"'"'$VAR/state.json'"'"')).get('"'"'profile'"'"') or '"'"''"'"')" 2>/dev/null)"
   if [ -n "$c" ] && [ -f "$PROFILE_DIR/$c.json" ]; then echo "$c"; return; fi
   echo "$PROFILE"
 }
