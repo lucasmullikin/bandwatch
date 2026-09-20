@@ -13,6 +13,7 @@ import fcntl
 import json
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -148,6 +149,38 @@ def kill_group(proc, tag, term_wait=10):
             return
         except subprocess.TimeoutExpired:
             log("%s ignored %s, escalating" % (tag, sig.name))
+
+
+def missing_binaries(lanes):
+    """Lane programs that are not there -> {program: [lane ids]}.
+
+    A missing decoder does NOT fail loudly. The lane starts, the shell writes
+    "No such file or directory" into that lane's own log, the process is gone
+    in a few seconds, and the rotation moves on to do it again. Nothing
+    aggregates it, so twelve lanes failing for one reason look like twelve
+    problems.
+
+    Measured: BANDWATCH_TOOLS pointing at a checkout whose tools/ holds only a
+    README took out every voice and decoder lane on BOTH radios, while the
+    sweeps -- which use a packaged rtl_power and never look in tools/ -- held
+    their dwells and reported themselves perfectly healthy. It read as a dead
+    dongle for half an hour.
+
+    Checked once at startup, where an environment mistake actually belongs.
+    """
+    missing = {}
+    for lane in lanes:
+        cmd = lane.get("cmd") or []
+        if not cmd:
+            continue
+        prog = str(cmd[0])
+        if os.path.isabs(prog) or prog.startswith("."):
+            ok = os.path.isfile(prog) and os.access(prog, os.X_OK)
+        else:
+            ok = shutil.which(prog) is not None
+        if not ok:
+            missing.setdefault(prog, []).append(lane.get("id", "?"))
+    return missing
 
 
 # How long to let a self-terminating lane finish its own exit before signalling.
@@ -517,6 +550,14 @@ def device_thread(dev, spec):
 
     log("dev%s (%s) up: %s" % (dev, spec.get("label", "?"),
                                ",".join(l["id"] for l in lanes)))
+
+    # Say it ONCE, here, rather than letting each lane discover it alone.
+    for prog, ids in sorted(missing_binaries(lanes).items()):
+        log("dev%s: MISSING PROGRAM %s -- %d lane(s) will start and die within "
+            "seconds (%s). This is a PATH problem, not a radio problem. "
+            "BANDWATCH_TOOLS=%s"
+            % (dev, prog, len(ids), ",".join(ids),
+               os.environ.get("BANDWATCH_TOOLS", "unset")))
     wedge = WedgeWatch(dev)
     try:
         while not _stop.is_set():
