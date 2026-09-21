@@ -182,3 +182,58 @@ def test_min_per_hour_override_of_zero_is_honoured():
     d["lanes"]["s"] = {"kind": "sweep", "range": "225M:400M:25k", "seconds": 300}
     got = lanes_of(M.build_profiles(d))
     assert got["s"]["expect_min_events_per_hour"] == 0
+
+
+# ------------------------------------- one pass must fit inside the slot
+
+def test_a_sweep_whose_pass_fits_keeps_its_configured_integration():
+    lane = built_sweep({"kind": "sweep", "range": "162.35M:162.6M:5k",
+                        "seconds": 40, "interval": 10})
+    assert lane["cmd"][5] == "10"
+    assert lane["sweep_hops"] == 1
+
+
+def test_integration_is_clamped_when_the_pass_cannot_fit():
+    """air_survey: 19 MHz is 8 hops; at -i 10 one pass needs 80s in a 60s slot.
+
+    rtl_power honours -e at a PASS BOUNDARY, not mid-pass, so it ran until the
+    pass finished, sailed past the dwell and was SIGKILLed -- and a SIGKILL
+    mid-USB-transfer is what leaves the interface claimed.
+    """
+    lane = built_sweep({"kind": "sweep", "range": "118M:137M:25k",
+                        "seconds": 60, "interval": 10})
+    assert lane["sweep_hops"] == 8
+    assert lane["sweep_pass_s"] <= 50          # dwell 60 minus the 10s margin
+    assert int(lane["cmd"][5]) < 10
+
+
+def test_the_clamp_only_ever_lowers_integration():
+    """A configured value that already fits must be left alone."""
+    lane = built_sweep({"kind": "sweep", "range": "929M:932M:12.5k",
+                        "seconds": 40, "interval": 5})
+    assert lane["cmd"][5] == "5"
+
+
+def test_integration_never_clamps_below_one_second():
+    """175 MHz in a short slot would otherwise compute a 0s integration."""
+    lane = built_sweep({"kind": "sweep", "range": "225M:400M:25k",
+                        "seconds": 30, "interval": 10})
+    assert int(lane["cmd"][5]) >= 1
+
+
+def test_every_sweep_pass_fits_its_slot_after_clamping():
+    """The property, over the shapes that actually broke."""
+    for rng, secs, iv in (("118M:137M:25k", 60, 10),     # air_survey
+                          ("88M:108M:100k", 45, 10),     # survey_fm
+                          ("902M:928M:12.5k", 40, 12),   # lora915
+                          ("225M:400M:25k", 300, 3)):    # milair_survey
+        lane = built_sweep({"kind": "sweep", "range": rng,
+                            "seconds": secs, "interval": iv})
+        assert lane["sweep_pass_s"] <= int(lane["cmd"][6]), (rng, lane)
+
+
+def test_span_parsing_handles_the_rtl_power_spellings():
+    assert M._span_mhz("118M", "137M") == 19.0
+    assert M._span_mhz("902M", "928M") == 26.0
+    assert round(M._span_mhz("162.35M", "162.6M"), 3) == 0.25
+    assert M._span_mhz("1G", "1.1G") == 100.0

@@ -20,6 +20,7 @@ error. A device with no serial in config is a hard failure, because generating
 without one silently unpins the radio.
 """
 import json
+import math
 import os
 import sys
 
@@ -35,6 +36,22 @@ OUT = os.environ.get("BANDWATCH_PROFILES_OUT") or LIVE
 # --------------------------------------------------------------------------
 # Lane builders. One per "kind" in config/lanes.json.
 # --------------------------------------------------------------------------
+
+
+# An RTL-SDR tunes ~2.4 MHz at a time, so rtl_power hops a wider range. This is
+# what decides how long one pass takes, and therefore whether a pass can finish
+# inside its lane slot at all.
+HOP_MHZ = 2.4
+
+
+def _span_mhz(low, high):
+    """Width of a sweep range given rtl_power's "118M"/"1090M" spellings."""
+    def mhz(v):
+        v = str(v).strip()
+        mult = {"k": 0.001, "M": 1.0, "G": 1000.0}
+        return float(v[:-1]) * mult[v[-1]] if v and v[-1] in mult else float(v) / 1e6
+    return abs(mhz(high) - mhz(low))
+
 
 def _voice(lane, spec):
     conf = spec.get("conf") or (lane + ".conf")
@@ -78,13 +95,31 @@ def _sweep(lane, spec):
         raise C.ConfigError(
             "lanes.json: lane %r has range %r; expected LOW:HIGH:BINSIZE, "
             "e.g. \"225M:400M:25k\"" % (lane, spec.get("range")))
+    # ONE PASS must fit the slot, and -e alone does not guarantee it: rtl_power
+    # honours -e at a PASS BOUNDARY, not mid-pass. A sweep whose pass takes
+    # longer than its -e therefore runs until the pass completes, sails past
+    # the dwell, and is SIGKILLed -- which is the thing that wedges the radio.
+    #
+    # Measured: air_survey needed 80s of pass in a 60s dwell, survey_fm 90s in
+    # 45s, lora915 132s in 40s. All three were killed on most runs.
+    #
+    # So the integration time is clamped to whatever lets the pass finish. It
+    # only ever goes DOWN: a configured value that already fits is untouched.
+    interval = int(spec.get("interval", 10))
+    hops = max(1, math.ceil(_span_mhz(low, high) / HOP_MHZ))
+    fits = max(1, dwell // hops)
+    if interval > fits:
+        spec = dict(spec, _interval_clamped_from=interval)
+        interval = fits
     return dict(
         event_file=out,
         self_terminating=True,
         count_mode="mtime",
         expect_min_events_per_hour=spec.get("min_per_hour", 1),
+        sweep_hops=hops,
+        sweep_pass_s=hops * interval,
         cmd=[os.path.join(C.ROOT, "bin", "lane-survey.sh"), "{DEV}",
-             low, high, binsize, str(spec.get("interval", 10)), str(dwell),
+             low, high, binsize, str(interval), str(dwell),
              out, str(spec.get("gain", "40"))])
 
 
